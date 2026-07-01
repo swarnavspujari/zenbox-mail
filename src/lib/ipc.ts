@@ -4,7 +4,7 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
-  AccountInfo,
+  AccountsState,
   AiProviderId,
   DraftRequest,
   KnowledgeBase,
@@ -35,17 +35,24 @@ export interface DraftStreamHandlers {
 }
 
 export interface Backend {
-  getAccount(): Promise<AccountInfo>;
-  startOauth(clientId: string, clientSecret: string): Promise<AccountInfo>;
-  disconnect(): Promise<void>;
+  getAccounts(): Promise<AccountsState>;
+  switchAccount(email: string): Promise<AccountsState>;
+  reorderAccounts(emails: string[]): Promise<AccountsState>;
+  hasGmailClient(): Promise<boolean>;
+  /** Blank strings reuse the OAuth client already in the keychain. */
+  startOauth(clientId: string, clientSecret: string): Promise<AccountsState>;
+  disconnect(email: string): Promise<AccountsState>;
   syncNow(): Promise<void>;
 
   listThreads(view: MailView): Promise<Thread[]>;
   getThread(id: ThreadId): Promise<Message[]>;
   archiveThread(id: ThreadId): Promise<void>;
   moveToInbox(id: ThreadId): Promise<void>;
+  trashThread(id: ThreadId): Promise<void>;
+  toggleStar(id: ThreadId): Promise<boolean>;
   snoozeThread(id: ThreadId, untilMs: number): Promise<void>;
   markUnread(id: ThreadId): Promise<void>;
+  markRead(id: ThreadId): Promise<void>;
   moveLabel(id: ThreadId, label: string): Promise<void>;
   listLabels(): Promise<string[]>;
   sendMail(mail: OutgoingMail): Promise<void>;
@@ -77,14 +84,23 @@ export const isTauri =
 let aiRequestSeq = 1;
 
 class TauriBackend implements Backend {
-  getAccount() {
-    return invoke<AccountInfo>("get_account");
+  getAccounts() {
+    return invoke<AccountsState>("get_accounts");
+  }
+  switchAccount(email: string) {
+    return invoke<AccountsState>("switch_account", { email });
+  }
+  reorderAccounts(emails: string[]) {
+    return invoke<AccountsState>("reorder_accounts", { emails });
+  }
+  hasGmailClient() {
+    return invoke<boolean>("has_gmail_client");
   }
   startOauth(clientId: string, clientSecret: string) {
-    return invoke<AccountInfo>("start_oauth", { clientId, clientSecret });
+    return invoke<AccountsState>("start_oauth", { clientId, clientSecret });
   }
-  disconnect() {
-    return invoke<void>("disconnect_account");
+  disconnect(email: string) {
+    return invoke<AccountsState>("disconnect_account", { email });
   }
   syncNow() {
     return invoke<void>("sync_now");
@@ -101,11 +117,20 @@ class TauriBackend implements Backend {
   moveToInbox(id: ThreadId) {
     return invoke<void>("move_to_inbox", { threadId: id });
   }
+  trashThread(id: ThreadId) {
+    return invoke<void>("trash_thread", { threadId: id });
+  }
+  toggleStar(id: ThreadId) {
+    return invoke<boolean>("toggle_star", { threadId: id });
+  }
   snoozeThread(id: ThreadId, untilMs: number) {
     return invoke<void>("snooze_thread", { threadId: id, untilMs });
   }
   markUnread(id: ThreadId) {
     return invoke<void>("mark_unread", { threadId: id });
+  }
+  markRead(id: ThreadId) {
+    return invoke<void>("mark_read", { threadId: id });
   }
   moveLabel(id: ThreadId, label: string) {
     return invoke<void>("move_label", { threadId: id, label });

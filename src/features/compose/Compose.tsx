@@ -124,7 +124,7 @@ export function Compose() {
   }, []);
 
   useEffect(() => {
-    const send = async () => {
+    const send = async (markDone: boolean) => {
       const c = useUi.getState().compose;
       if (!c || sending) return;
       const to = splitAddresses(c.to);
@@ -135,16 +135,28 @@ export function Compose() {
       setSending(true);
       setError(null);
       try {
+        const bodyText = [c.body, c.signature, c.quote]
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .join("\n\n");
         await backend.sendMail({
           threadId: c.threadId,
           to,
           cc: splitAddresses(c.cc),
           subject: c.subject || "(no subject)",
-          bodyText: c.quote ? `${c.body}\n\n${c.quote}` : c.body,
+          bodyText,
           replyAll: c.mode === "replyAll",
         });
         useUi.getState().closeCompose();
-        useUi.getState().showToast("Sent");
+        if (markDone && c.threadId) {
+          if (useMail.getState().openThreadId === c.threadId)
+            useMail.getState().closeThread();
+          await useMail.getState().archive(c.threadId);
+          useUi.getState().showToast("Sent & marked done");
+          await useUi.getState().checkInboxZero();
+        } else {
+          useUi.getState().showToast("Sent");
+        }
         await useMail.getState().refresh();
       } catch (e) {
         setError(String(e));
@@ -152,7 +164,8 @@ export function Compose() {
         setSending(false);
       }
     };
-    const handler = () => void send();
+    const handler = (e: Event) =>
+      void send(Boolean((e as CustomEvent).detail?.markDone));
     window.addEventListener("zenbox:send", handler);
     return () => window.removeEventListener("zenbox:send", handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -215,6 +228,15 @@ export function Compose() {
           className="min-h-0 flex-1 resize-none bg-transparent px-4 py-3 text-[13.5px] leading-relaxed text-ink outline-none"
           placeholder="Write, or press Ctrl+J to draft with AI…"
         />
+
+        {compose.signature && (
+          <div
+            className="whitespace-pre-wrap border-t border-line px-4 py-2 text-[12.5px] leading-relaxed text-ink-2"
+            title="Signature — set per account in Settings → Account"
+          >
+            {compose.signature}
+          </div>
+        )}
 
         {compose.quote && (
           <div className="max-h-28 overflow-y-auto border-t border-line px-4 py-2 text-[12px] leading-relaxed text-ink-3">

@@ -82,6 +82,9 @@ pub struct Settings {
     pub providers: Vec<AiProviderConfig>,
     pub celebration_dir: Option<String>,
     pub shortcuts: std::collections::HashMap<String, String>,
+    /// account email -> signature text, appended to outgoing mail
+    #[serde(default)]
+    pub signatures: std::collections::HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -112,8 +115,16 @@ pub struct Streaks {
 #[serde(rename_all = "camelCase")]
 pub struct AccountInfo {
     pub email: String,
-    pub provider: String, // gmail | mock
+    pub provider: String, // gmail | outlook | mock
     pub connected: bool,
+}
+
+/// All connected accounts, in slot order (index 0 = Ctrl+1), plus the active one.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountsState {
+    pub accounts: Vec<AccountInfo>,
+    pub active: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

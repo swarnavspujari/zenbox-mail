@@ -7,6 +7,7 @@ const now = Date.now();
 
 interface Seed {
   thread: Omit<Thread, "snippet" | "messageCount" | "lastDate" | "participants">;
+  account?: string; // defaults to the primary demo account
   messages: Array<
     Pick<Message, "from" | "fromName" | "to" | "cc" | "bodyText"> & {
       ageMs: number;
@@ -17,6 +18,8 @@ interface Seed {
 }
 
 const ME = "you@zenbox.local";
+export const DEMO_ACCOUNT = "demo@zenbox.local";
+export const DEMO_ACCOUNT_2 = "angel@zenbox.local";
 
 const seeds: Seed[] = [
   {
@@ -323,6 +326,84 @@ const seeds: Seed[] = [
   },
 ];
 
+// Second demo account (angel@) — proves Ctrl+1/2 account switching.
+const account2Seeds: Seed[] = [
+  {
+    thread: {
+      id: "t2-safe-note",
+      subject: "SAFE for Brightloop — countersigned copy",
+      unread: true,
+      starred: true,
+      labels: ["IMPORTANT"],
+      inInbox: true,
+      snoozedUntil: null,
+    },
+    account: DEMO_ACCOUNT_2,
+    messages: [
+      {
+        from: "theo@brightloop.dev",
+        fromName: "Theo Lindqvist",
+        to: [ME],
+        cc: [],
+        ageMs: 5 * H,
+        unread: true,
+        bodyText:
+          "Countersigned SAFE attached — $50k at a $6M cap, as discussed. Wiring details are in the doc. Thanks for moving fast on this, means a lot.\n\nTheo",
+        attachments: [
+          { filename: "Brightloop_SAFE_countersigned.pdf", mimeType: "application/pdf", sizeBytes: 96_500 },
+        ],
+      },
+    ],
+  },
+  {
+    thread: {
+      id: "t2-demo-day",
+      subject: "You're invited: Foundry Batch 12 Demo Day",
+      unread: true,
+      starred: false,
+      labels: ["CALENDAR"],
+      inInbox: true,
+      snoozedUntil: null,
+    },
+    account: DEMO_ACCOUNT_2,
+    messages: [
+      {
+        from: "events@foundryaccel.com",
+        fromName: "Foundry Accelerator",
+        to: [ME],
+        cc: [],
+        ageMs: 20 * H,
+        unread: true,
+        bodyText:
+          "Invitation: Foundry Batch 12 Demo Day\nWhen: July 22, 2026, 1:00 PM (PT)\nWhere: Fort Mason, SF + livestream\n\n14 companies presenting. RSVP by the 10th for in-person seats.",
+      },
+    ],
+  },
+  {
+    thread: {
+      id: "t2-angellist",
+      subject: "Your Q2 portfolio summary is ready",
+      unread: false,
+      starred: false,
+      labels: [],
+      inInbox: true,
+      snoozedUntil: null,
+    },
+    account: DEMO_ACCOUNT_2,
+    messages: [
+      {
+        from: "no-reply@angellist.com",
+        fromName: "AngelList",
+        to: [ME],
+        cc: [],
+        ageMs: 2 * D,
+        bodyText:
+          "Your Q2 2026 portfolio summary: 11 active investments, 2 markups this quarter (Brightloop, Corvid Security), 1 write-down. Full report in your dashboard.",
+      },
+    ],
+  },
+];
+
 // Older archived threads so the Done view and search have content.
 const doneSeed: Seed[] = [
   {
@@ -394,12 +475,18 @@ function buildMessages(seed: Seed): Message[] {
   }));
 }
 
-export function buildSeedData(): { threads: Thread[]; messages: Map<string, Message[]> } {
+export function buildSeedData(): {
+  threads: Thread[];
+  messages: Map<string, Message[]>;
+  accountOf: Map<string, string>;
+} {
   const threads: Thread[] = [];
   const messages = new Map<string, Message[]>();
-  for (const seed of [...seeds, ...doneSeed]) {
+  const accountOf = new Map<string, string>();
+  for (const seed of [...seeds, ...account2Seeds, ...doneSeed]) {
     const msgs = buildMessages(seed);
     messages.set(seed.thread.id, msgs);
+    accountOf.set(seed.thread.id, seed.account ?? DEMO_ACCOUNT);
     const last = msgs[msgs.length - 1];
     threads.push({
       ...seed.thread,
@@ -410,5 +497,5 @@ export function buildSeedData(): { threads: Thread[]; messages: Map<string, Mess
       unread: msgs.some((m) => m.unread),
     });
   }
-  return { threads, messages };
+  return { threads, messages, accountOf };
 }

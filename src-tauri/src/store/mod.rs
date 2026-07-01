@@ -68,7 +68,43 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
         "#,
     )
     .map_err(|e| e.to_string())?;
+
+    // v0.2 migration: per-account mail. Errors mean the column already exists.
+    let _ = conn.execute(
+        "ALTER TABLE threads ADD COLUMN account_id TEXT NOT NULL DEFAULT 'demo@zenbox.local'",
+        [],
+    );
     Ok(conn)
+}
+
+pub const DEMO_ACCOUNT: &str = "demo@zenbox.local";
+pub const DEMO_ACCOUNT_2: &str = "angel@zenbox.local";
+
+pub fn get_accounts(conn: &Connection) -> AccountsState {
+    if let Some(state) = get_json::<AccountsState>(conn, "accounts") {
+        if !state.accounts.is_empty() {
+            return state;
+        }
+    }
+    // migrate v0.1's single-account kv, else fall back to the demo pair
+    if let Some(old) = get_json::<AccountInfo>(conn, "account") {
+        if old.provider == "gmail" {
+            let state = AccountsState { active: old.email.clone(), accounts: vec![old] };
+            let _ = set_json(conn, "accounts", &state);
+            return state;
+        }
+    }
+    AccountsState {
+        accounts: vec![
+            AccountInfo { email: DEMO_ACCOUNT.into(), provider: "mock".into(), connected: true },
+            AccountInfo { email: DEMO_ACCOUNT_2.into(), provider: "mock".into(), connected: true },
+        ],
+        active: DEMO_ACCOUNT.into(),
+    }
+}
+
+pub fn save_accounts(conn: &Connection, state: &AccountsState) -> Result<(), String> {
+    set_json(conn, "accounts", state)
 }
 
 // ---------------------------------------------------------------- kv (JSON)
@@ -108,20 +144,35 @@ pub fn default_settings() -> Settings {
         ("list.prev", "k|up"),
         ("thread.unread", "u"),
         ("thread.move", "v"),
+        ("thread.replyAll", "a"),
+        ("thread.star", "s"),
+        ("thread.trash", "#"),
+        ("thread.notDone", "shift+e"),
         ("search", "/"),
         ("ai.ask", "?"),
         ("split.next", "tab"),
         ("split.prev", "shift+tab"),
         ("goto.inbox", "g i"),
+        ("goto.other", "g o"),
         ("goto.done", "g e"),
         ("goto.reminders", "g h"),
         ("compose.ai", "mod+j"),
         ("compose.send", "mod+enter"),
+        ("compose.sendDone", "mod+shift+enter"),
         ("thread.cycleSuggestion", "tab"),
         ("back", "escape"),
         ("inbox.zeroSweep", ""),
         ("sync.now", ""),
         ("settings.open", "mod+,"),
+        ("account.1", "mod+1"),
+        ("account.2", "mod+2"),
+        ("account.3", "mod+3"),
+        ("account.4", "mod+4"),
+        ("account.5", "mod+5"),
+        ("account.6", "mod+6"),
+        ("account.7", "mod+7"),
+        ("account.8", "mod+8"),
+        ("account.9", "mod+9"),
     ] {
         shortcuts.insert(k.to_string(), v.to_string());
     }
@@ -156,7 +207,9 @@ pub fn default_settings() -> Settings {
                 hide_when_empty: false,
             },
         ],
-        default_ai_provider: "claude".into(),
+        // NIM/DeepSeek is the default because it's the key the user supplied;
+        // switch to Claude/OpenAI any time in Settings.
+        default_ai_provider: "nim".into(),
         providers: vec![
             AiProviderConfig {
                 id: "claude".into(),
@@ -175,18 +228,42 @@ pub fn default_settings() -> Settings {
             AiProviderConfig {
                 id: "nim".into(),
                 label: "NVIDIA NIM".into(),
-                model: "meta/llama-3.3-70b-instruct".into(),
+                model: "deepseek-ai/deepseek-v4-pro".into(),
                 base_url: Some("https://integrate.api.nvidia.com/v1".into()),
                 has_key: false,
             },
         ],
         celebration_dir: None,
         shortcuts,
+        signatures: HashMap::new(),
     }
 }
 
+/// Saved settings merged with defaults, so upgrades gain new shortcuts and
+/// providers without wiping user customization. `has_key` always reflects
+/// the keychain, not a stored flag (keys can be seeded/removed out-of-band).
 pub fn get_settings(conn: &Connection) -> Settings {
-    get_json(conn, "settings").unwrap_or_else(default_settings)
+    let defaults = default_settings();
+    let mut s = match get_json::<Settings>(conn, "settings") {
+        None => defaults,
+        Some(mut s) => {
+            for (k, v) in defaults.shortcuts {
+                s.shortcuts.entry(k).or_insert(v);
+            }
+            for p in defaults.providers {
+                if !s.providers.iter().any(|x| x.id == p.id) {
+                    s.providers.push(p);
+                }
+            }
+            s
+        }
+    };
+    for p in s.providers.iter_mut() {
+        if let Some(entry) = crate::secrets::ai_key_entry(&p.id) {
+            p.has_key = crate::secrets::get(entry).is_some();
+        }
+    }
+    s
 }
 
 pub fn get_kb(conn: &Connection) -> KnowledgeBase {
@@ -201,12 +278,14 @@ pub fn get_streaks(conn: &Connection) -> Streaks {
     get_json(conn, "streaks").unwrap_or(Streaks { daily: 0, weekly: 0, last_zero_day: None })
 }
 
-pub fn get_account(conn: &Connection) -> AccountInfo {
-    get_json(conn, "account").unwrap_or(AccountInfo {
-        email: "demo@zenbox.local".into(),
-        provider: "mock".into(),
-        connected: true,
-    })
+pub fn active_account(conn: &Connection) -> AccountInfo {
+    let state = get_accounts(conn);
+    state
+        .accounts
+        .iter()
+        .find(|a| a.email == state.active)
+        .cloned()
+        .unwrap_or_else(|| state.accounts[0].clone())
 }
 
 // ---------------------------------------------------------------- rows
@@ -229,22 +308,27 @@ fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
 
 const THREAD_COLS: &str = "id, subject, snippet, participants, message_count, last_date, unread, starred, labels, in_inbox, snoozed_until";
 
-pub fn list_threads(conn: &Connection, view: &str) -> Result<Vec<Thread>, String> {
+pub fn list_threads(conn: &Connection, view: &str, account_id: &str) -> Result<Vec<Thread>, String> {
     let where_clause = match view {
         "inbox" => "in_inbox = 1 AND snoozed_until IS NULL",
         "reminders" => "snoozed_until IS NOT NULL",
         _ => "in_inbox = 0 AND snoozed_until IS NULL",
     };
     let sql = format!(
-        "SELECT {THREAD_COLS} FROM threads WHERE {where_clause} ORDER BY last_date DESC LIMIT 500"
+        "SELECT {THREAD_COLS} FROM threads WHERE {where_clause} AND account_id = ?1 ORDER BY last_date DESC LIMIT 500"
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], row_to_thread)
+        .query_map(params![account_id], row_to_thread)
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
     Ok(rows)
+}
+
+pub fn account_of_thread(conn: &Connection, id: &str) -> Option<String> {
+    conn.query_row("SELECT account_id FROM threads WHERE id = ?1", params![id], |r| r.get(0))
+        .ok()
 }
 
 pub fn get_thread(conn: &Connection, id: &str) -> Option<Thread> {
@@ -309,18 +393,19 @@ pub fn get_messages(conn: &Connection, thread_id: &str) -> Result<Vec<Message>, 
 /// Upsert a thread and its messages (used by both mock seeding and Gmail sync).
 pub fn upsert_thread(
     conn: &Connection,
+    account_id: &str,
     t: &Thread,
     msgs: &[(Message, Option<String>, Vec<(Attachment, Option<String>, Option<String>)>)],
 ) -> Result<(), String> {
     conn.execute(
         "INSERT INTO threads (id, subject, snippet, participants, message_count, last_date,
-                              unread, starred, labels, in_inbox, snoozed_until)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+                              unread, starred, labels, in_inbox, snoozed_until, account_id)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
          ON CONFLICT(id) DO UPDATE SET
             subject=excluded.subject, snippet=excluded.snippet,
             participants=excluded.participants, message_count=excluded.message_count,
             last_date=excluded.last_date, unread=excluded.unread, starred=excluded.starred,
-            labels=excluded.labels, in_inbox=excluded.in_inbox",
+            labels=excluded.labels, in_inbox=excluded.in_inbox, account_id=excluded.account_id",
         params![
             t.id,
             t.subject,
@@ -333,6 +418,7 @@ pub fn upsert_thread(
             serde_json::to_string(&t.labels).unwrap(),
             t.in_inbox as i64,
             t.snoozed_until,
+            account_id,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -425,6 +511,45 @@ pub fn wake_due_snoozes(conn: &Connection, now_ms: i64) -> Result<Vec<String>, S
     Ok(ids)
 }
 
+pub fn set_starred(conn: &Connection, id: &str, starred: bool) -> Result<(), String> {
+    conn.execute("UPDATE threads SET starred = ?2 WHERE id = ?1", params![id, starred as i64])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Trash = remove the thread from the local cache entirely (Gmail keeps it
+/// recoverable server-side for 30 days).
+pub fn delete_thread(conn: &Connection, id: &str) -> Result<(), String> {
+    conn.execute("DELETE FROM mail_fts WHERE thread_id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM attachments WHERE message_id IN (SELECT id FROM messages WHERE thread_id = ?1)",
+        params![id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM messages WHERE thread_id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM threads WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn clear_account_mail(conn: &Connection, account_id: &str) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM threads WHERE account_id = ?1")
+        .map_err(|e| e.to_string())?;
+    let ids: Vec<String> = stmt
+        .query_map(params![account_id], |r| r.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+    for id in ids {
+        delete_thread(conn, &id)?;
+    }
+    Ok(())
+}
+
 pub fn set_unread(conn: &Connection, id: &str, unread: bool) -> Result<(), String> {
     conn.execute("UPDATE threads SET unread = ?2 WHERE id = ?1", params![id, unread as i64])
         .map_err(|e| e.to_string())?;
@@ -476,7 +601,7 @@ pub fn list_labels(conn: &Connection) -> Result<Vec<String>, String> {
     Ok(set.into_iter().collect())
 }
 
-pub fn search(conn: &Connection, query: &str) -> Result<Vec<SearchResult>, String> {
+pub fn search(conn: &Connection, query: &str, account_id: &str) -> Result<Vec<SearchResult>, String> {
     if query.trim().is_empty() {
         return Ok(vec![]);
     }
@@ -498,12 +623,12 @@ pub fn search(conn: &Connection, query: &str) -> Result<Vec<SearchResult>, Strin
         .prepare(
             "SELECT t.id, t.subject, t.snippet, t.last_date
              FROM mail_fts f JOIN threads t ON t.id = f.thread_id
-             WHERE mail_fts MATCH ?1
+             WHERE mail_fts MATCH ?1 AND t.account_id = ?2
              GROUP BY t.id ORDER BY t.last_date DESC LIMIT 60",
         )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(params![match_expr], |r| {
+        .query_map(params![match_expr, account_id], |r| {
             Ok(SearchResult {
                 thread_id: r.get(0)?,
                 subject: r.get(1)?,
@@ -519,13 +644,7 @@ pub fn search(conn: &Connection, query: &str) -> Result<Vec<SearchResult>, Strin
 
 /// Threads eligible for "Get Me To Zero"; the split filter runs in the caller
 /// (split semantics live with the settings, not the store).
-pub fn inbox_threads_for_sweep(conn: &Connection) -> Result<Vec<Thread>, String> {
-    list_threads(conn, "inbox")
+pub fn inbox_threads_for_sweep(conn: &Connection, account_id: &str) -> Result<Vec<Thread>, String> {
+    list_threads(conn, "inbox", account_id)
 }
 
-pub fn clear_mail(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(
-        "DELETE FROM threads; DELETE FROM messages; DELETE FROM attachments; DELETE FROM mail_fts;",
-    )
-    .map_err(|e| e.to_string())
-}

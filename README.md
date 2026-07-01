@@ -8,7 +8,8 @@ A **keyboard-first, AI-native desktop email client** in the spirit of Superhuman
 
 ## Features
 
-- **Fly through email** — every action has a key: `E` done, `R` reply, `H` remind, `J/K` navigate, `Tab` next split. A `Ctrl+K` command palette lists everything with its shortcut.
+- **Fly through email** — the keymap replicates **Superhuman v7 (Windows/Linux)**: `E` done, `Shift+E` not done, `R`/`A` reply/reply-all, `S` star, `#` trash, `H` remind, `U` read/unread, `J/K` navigate, `G`-chords, `Tab` next split. A `Ctrl+K` command palette lists everything with its shortcut.
+- **Multiple accounts, instant switching** — connect several Gmail accounts (one shared OAuth client) and jump between inboxes with `Ctrl+1…9`; slots are reassignable by reordering in Settings. Per-account signatures. Outlook (Microsoft Graph) is scaffolded for v0.3.
 - **Split Inbox** — Important / Other / Calendar out of the box, plus custom splits from `from:` / `to:` / `subject:` / label rules (AND/OR). Counts show **total** conversations, so a split reads like a to-do list.
 - **Inbox Zero, celebrated** — hit zero in a split and get a full-screen celebration image with your daily/weekly streak. **Get Me To Zero** bulk-archives old mail (preserving unread/starred if you want) so the first cleanup takes seconds.
 - **Write with AI (`Ctrl+J`)** — drafts stream in from **Claude, OpenAI, or NVIDIA NIM** using *your* key. The model sees the full thread, parsed attachments (PDF, text, best-effort .docx, images to multimodal models), and your personal Knowledge Base — so drafts sound like you and are grounded in real context.
@@ -54,9 +55,9 @@ Settings → **AI Providers** → paste a key for any of:
 
 | Provider | Get a key at | Notes |
 |---|---|---|
-| Claude (default) | [console.anthropic.com](https://console.anthropic.com) | SSE streaming via the Messages API |
+| NVIDIA NIM (default) | [build.nvidia.com](https://build.nvidia.com) | DeepSeek v4 (`deepseek-ai/deepseek-v4-pro`); OpenAI-compatible, hosted or self-hosted base URL |
+| Claude | [console.anthropic.com](https://console.anthropic.com) | SSE streaming via the Messages API |
 | OpenAI | [platform.openai.com](https://platform.openai.com/api-keys) | Chat Completions, streaming |
-| NVIDIA NIM | [build.nvidia.com](https://build.nvidia.com) | OpenAI-compatible; hosted or self-hosted base URL |
 
 Details and model configuration: [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md). Use **Test connection** to verify. Keys are stored in the OS keychain and sent only to the provider you chose.
 
@@ -66,14 +67,15 @@ Details and model configuration: [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md). U
 |-----|--------|-----|--------|
 | `Ctrl+K` | Command palette | `V` | Move to folder/label |
 | `C` | Compose | `/` | Search |
-| `E` | Mark Done (archive) | `?` | Ask AI |
+| `E` / `Shift+E` | Mark Done / Not Done | `?` | Ask AI |
 | `H` | Remind me / snooze | `Tab` | Next split · preview instant reply (in thread) |
-| `R` | Reply | `Shift+Tab` | Previous split |
-| `F` | Forward | `G` then `I` | Go to Inbox |
-| `Enter` | Open (list) / Reply-all (thread) | `G` then `E` | Go to Done |
-| `J` / `↓`, `K` / `↑` | Next / previous conversation | `G` then `H` | Go to Reminders |
-| `U` | Mark unread | `Ctrl+J` | Write with AI (in compose) |
-| `Esc` | Back / close | `Ctrl+Enter` | Send (in compose) |
+| `R` / `A` | Reply / Reply all | `Shift+Tab` | Previous split |
+| `F` | Forward | `G` then `I`/`O`/`E`/`H` | Go to Inbox / Other / Done / Reminders |
+| `Enter` | Open (list) / Reply-all (thread) | `S` | Star |
+| `J` / `↓`, `K` / `↑` | Next / previous conversation | `#` | Trash |
+| `U` | Mark read/unread | `Ctrl+J` | Write with AI (in compose) |
+| `Ctrl+1…9` | Switch account | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Send / Send & Mark Done |
+| `Esc` | Back / close | | |
 
 Every shortcut is remappable in **Settings → Shortcuts**. Full list + smoke test: [docs/SHORTCUTS.md](docs/SHORTCUTS.md).
 

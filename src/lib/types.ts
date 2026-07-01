@@ -83,8 +83,14 @@ export interface Streaks {
 
 export interface AccountInfo {
   email: string;
-  provider: "gmail" | "mock";
+  provider: "gmail" | "outlook" | "mock";
   connected: boolean;
+}
+
+/** All connected accounts in slot order (index 0 = Ctrl+1) + the active one. */
+export interface AccountsState {
+  accounts: AccountInfo[];
+  active: string;
 }
 
 export interface Settings {
@@ -93,6 +99,7 @@ export interface Settings {
   providers: AiProviderConfig[];
   celebrationDir: string | null; // user-supplied folder of images; null = bundled
   shortcuts: Record<string, string>; // commandId -> key expression
+  signatures: Record<string, string>; // account email -> signature text
 }
 
 export interface DraftRequest {

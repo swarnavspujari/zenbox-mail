@@ -29,8 +29,11 @@ interface MailState {
   closeThread: () => void;
 
   archive: (id: ThreadId) => Promise<void>;
+  trash: (id: ThreadId) => Promise<void>;
+  toggleStar: (id: ThreadId) => Promise<void>;
   snooze: (id: ThreadId, untilMs: number) => Promise<void>;
   markUnread: (id: ThreadId) => Promise<void>;
+  markRead: (id: ThreadId) => Promise<void>;
   moveLabel: (id: ThreadId, label: string) => Promise<void>;
   moveToInbox: (id: ThreadId) => Promise<void>;
   runSearch: (query: string) => Promise<void>;
@@ -130,6 +133,23 @@ export const useMail = create<MailState>((set, get) => ({
     await get().refresh();
   },
 
+  trash: async (id) => {
+    set((s) => ({
+      inbox: s.inbox.filter((t) => t.id !== id),
+      done: s.done.filter((t) => t.id !== id),
+      reminders: s.reminders.filter((t) => t.id !== id),
+    }));
+    await backend.trashThread(id);
+    await get().refresh();
+  },
+
+  toggleStar: async (id) => {
+    const flip = (list: Thread[]) =>
+      list.map((t) => (t.id === id ? { ...t, starred: !t.starred } : t));
+    set((s) => ({ inbox: flip(s.inbox), done: flip(s.done), reminders: flip(s.reminders) }));
+    await backend.toggleStar(id);
+  },
+
   snooze: async (id, untilMs) => {
     set((s) => {
       const t = s.inbox.find((t) => t.id === id);
@@ -149,6 +169,13 @@ export const useMail = create<MailState>((set, get) => ({
       inbox: s.inbox.map((t) => (t.id === id ? { ...t, unread: true } : t)),
     }));
     await backend.markUnread(id);
+  },
+
+  markRead: async (id) => {
+    set((s) => ({
+      inbox: s.inbox.map((t) => (t.id === id ? { ...t, unread: false } : t)),
+    }));
+    await backend.markRead(id);
   },
 
   moveLabel: async (id, label) => {

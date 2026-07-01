@@ -15,6 +15,7 @@ export interface ComposeState {
   cc: string;
   subject: string;
   body: string;
+  signature: string; // active account's signature, appended on send
   quote: string; // read-only quoted context shown under the editor
 }
 

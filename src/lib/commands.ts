@@ -3,7 +3,7 @@
 import { backend } from "./ipc";
 import type { Binding } from "./keyboard";
 import { useMail, visibleThreads } from "@/stores/mail";
-import { useSettings } from "@/stores/settings";
+import { activeSignature, useSettings } from "@/stores/settings";
 import {
   actionTargetThreadId,
   useUi,
@@ -46,7 +46,7 @@ async function messagesFor(id: ThreadId): Promise<Message[]> {
 }
 
 function myAddress(): string {
-  return useSettings.getState().account?.email ?? "";
+  return useSettings.getState().accounts.active ?? "";
 }
 
 export async function startReply(
@@ -69,6 +69,7 @@ export async function startReply(
     threadId: id,
     to: "",
     cc: "",
+    signature: activeSignature(),
     subject:
       mode === "forward"
         ? subject.startsWith("Fwd:")
@@ -125,6 +126,7 @@ export function allCommands(): Command[] {
           cc: "",
           subject: "",
           body: "",
+          signature: activeSignature(),
           quote: "",
         }),
     },
@@ -140,6 +142,44 @@ export function allCommands(): Command[] {
         await mail().archive(id);
         ui().showToast("Done");
         await ui().checkInboxZero();
+      },
+    },
+    {
+      id: "thread.notDone",
+      title: "Mark Not Done (back to inbox)",
+      group: "Triage",
+      when: () => hasTarget() && !inCompose() && mail().listView !== "inbox",
+      run: async () => {
+        const id = actionTargetThreadId();
+        if (!id) return;
+        if (mail().openThreadId === id) mail().closeThread();
+        await mail().moveToInbox(id);
+        ui().showToast("Moved to inbox");
+      },
+    },
+    {
+      id: "thread.trash",
+      title: "Trash",
+      group: "Triage",
+      when: () => hasTarget() && !inCompose(),
+      run: async () => {
+        const id = actionTargetThreadId();
+        if (!id) return;
+        if (mail().openThreadId === id) mail().closeThread();
+        await mail().trash(id);
+        ui().showToast("Moved to trash");
+        await ui().checkInboxZero();
+      },
+    },
+    {
+      id: "thread.star",
+      title: "Star / Unstar",
+      group: "Triage",
+      when: () => hasTarget() && !inCompose(),
+      run: async () => {
+        const id = actionTargetThreadId();
+        if (!id) return;
+        await mail().toggleStar(id);
       },
     },
     {
@@ -219,15 +259,25 @@ export function allCommands(): Command[] {
     },
     {
       id: "thread.unread",
-      title: "Mark Unread",
+      title: "Mark Read / Unread",
       group: "Triage",
       when: () => hasTarget() && !inCompose(),
       run: async () => {
         const id = actionTargetThreadId();
         if (!id) return;
-        await mail().markUnread(id);
-        if (mail().openThreadId === id) mail().closeThread();
-        ui().showToast("Marked unread");
+        const m = mail();
+        const t =
+          m.inbox.find((t) => t.id === id) ??
+          m.done.find((t) => t.id === id) ??
+          m.reminders.find((t) => t.id === id);
+        if (t?.unread) {
+          await m.markRead(id);
+          ui().showToast("Marked read");
+        } else {
+          await m.markUnread(id);
+          if (m.openThreadId === id) m.closeThread();
+          ui().showToast("Marked unread");
+        }
       },
     },
     {
@@ -286,6 +336,19 @@ export function allCommands(): Command[] {
       run: () => {
         mail().closeThread();
         mail().setListView("inbox");
+        mail().setActiveSplit("important");
+        ui().setScreen("mail");
+      },
+    },
+    {
+      id: "goto.other",
+      title: "Go to Other",
+      group: "Navigate",
+      when: () => !inCompose(),
+      run: () => {
+        mail().closeThread();
+        mail().setListView("inbox");
+        mail().setActiveSplit("other");
         ui().setScreen("mail");
       },
     },
@@ -330,6 +393,42 @@ export function allCommands(): Command[] {
         window.dispatchEvent(new CustomEvent("zenbox:send"));
       },
     },
+    {
+      id: "compose.sendDone",
+      title: "Send & Mark Done",
+      group: "Compose",
+      hidden: true,
+      when: () => inCompose(),
+      run: () => {
+        window.dispatchEvent(
+          new CustomEvent("zenbox:send", { detail: { markDone: true } })
+        );
+      },
+    },
+    // Ctrl+1..9 — Superhuman-style account switching (slots are the order in
+    // Settings → Account; reassign by reordering there).
+    ...Array.from({ length: 9 }, (_, i) => {
+      const slot = i + 1;
+      const email =
+        useSettings.getState().accounts.accounts[slot - 1]?.email ??
+        `Account ${slot}`;
+      return {
+        id: `account.${slot}`,
+        title: `Switch to ${email}`,
+        group: "Accounts",
+        when: () => useSettings.getState().accounts.accounts.length >= slot,
+        run: async () => {
+          const s = useSettings.getState();
+          const target = s.accounts.accounts[slot - 1];
+          if (!target || target.email === s.accounts.active) return;
+          mail().closeThread();
+          await s.switchAccount(target.email);
+          await mail().refresh();
+          ui().setScreen("mail");
+          ui().showToast(target.email);
+        },
+      } satisfies Command;
+    }),
     {
       id: "inbox.zeroSweep",
       title: "Get Me To Zero (bulk archive)…",

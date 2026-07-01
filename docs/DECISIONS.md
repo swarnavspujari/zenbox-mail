@@ -34,5 +34,18 @@ Running log of every non-default choice. Newest last.
 21. **No `.env` at runtime** — all credentials enter via the Settings UI into the keychain. `.env.example` documents what you need, nothing reads it.
 22. **Repo layout deviation**: celebration assets live in `public/inbox-zero/` (not `assets/`) for bundling reasons; `tests/` holds the acceptance script pointer rather than a unit-test suite at P0 (the smoke-test checklist in SHORTCUTS.md is the verification vehicle, executed on Windows).
 
+## v0.2 — Superhuman keymap parity, multi-account, signatures (2026-07-01)
+23. **Keymap realigned to Superhuman v7 (Windows & Linux edition)** from the user-provided PDFs: added `A` reply-all, `S` star, `#` trash, `Shift+E` mark-not-done, `U` read/unread toggle, `G O` Other, `Ctrl+Shift+Enter` send-&-mark-done, `Ctrl+1-9` account switching. Superhuman keys deliberately not mapped yet (features don't exist): `!` spam, `M` mute, `X` selection, `Z` undo, `G-S/D/T` views, calendar keys — listed in SHORTCUTS.md. `?` stays Ask AI per the original spec (Superhuman uses it for shortcut help); remappable anyway.
+24. **Multi-account**: threads carry `account_id`; one `GmailSession` per account keyed by email; one shared OAuth client serves all Gmail accounts; refresh tokens per account (`gmail:refresh_token:<email>`), v0.1's single-token name kept as a read fallback. Slots = list order in Settings; `Ctrl+N` switches; splits/KB/AI settings are global across accounts (per-account splits deferred until someone actually wants them).
+25. **Outlook (Microsoft Graph) is scaffolded, not implemented** — provider field, UI stub, and Azure app-registration docs exist; the Graph adapter is the headline of v0.3. Building it properly (folders ↔ archive semantics, conversation threading, MIME) deserves its own release rather than a rushed appendix to this one.
+26. **Trash (`#`)** uses Gmail's `threads.trash` (30-day recovery server-side); locally the thread is dropped from the cache entirely. No trash view at P0 — Gmail's web UI covers recovery; no undo yet (with Superhuman parity, `Z` undo is the natural v0.3 companion to spam/mute).
+27. **Signatures are per-account** (`settings.signatures[email]`), shown as a distinct block in compose and appended between body and quote on send. Not injected into the editable body so the AI draft flow can't accidentally treat the signature as draft text.
+28. **Demo mode now has two accounts** (`demo@` + `angel@zenbox.local`) so account switching is demonstrable with zero credentials, in both the browser mock and the desktop fixture DB.
+29. **Default AI = NIM with `deepseek-ai/deepseek-v4-pro`** — supersedes the original config's Claude default because the user supplied a NIM key and asked for DeepSeek v4 (verified live: model listed + streaming works). Claude/OpenAI remain one radio-click away.
+30. **`has_key` is computed from the keychain on every settings read**, not persisted — keys seeded or revoked outside the app (e.g. via `dev-secrets`) always display truthfully.
+31. **`dev-secrets` bin** seeds/checks/deletes keychain entries for development; values pass via env var only. Added `default-run = "zenbox-mail"` so `tauri dev` still resolves.
+32. **Linux (Fedora) is a declared target**: keyring grew the Secret Service backend, CI gained an ubuntu `cargo check` with WebKitGTK deps, SETUP documents Fedora/Debian packages. Full Linux smoke test gates calling it "supported".
+33. **Settings merge on read**: saved settings gain new default shortcuts/providers on upgrade instead of being wiped or frozen.
+
 ## Model defaults (editable in Settings)
-- Claude: `claude-sonnet-5` · OpenAI: `gpt-5.2` · NIM: `meta/llama-3.3-70b-instruct` @ `https://integrate.api.nvidia.com/v1`
+- **NIM (default): `deepseek-ai/deepseek-v4-pro`** @ `https://integrate.api.nvidia.com/v1` (alt: `deepseek-v4-flash`) · Claude: `claude-sonnet-5` · OpenAI: `gpt-5.2`

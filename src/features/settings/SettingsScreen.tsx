@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { backend, isTauri } from "@/lib/ipc";
 import { formatKeyExpr } from "@/lib/keyboard";
 import { allCommands } from "@/lib/commands";
@@ -49,21 +49,31 @@ function Section({
 // ---------------------------------------------------------------- Account
 
 function AccountTab() {
-  const account = useSettings((s) => s.account);
+  const accounts = useSettings((s) => s.accounts);
+  const settings = useSettings((s) => s.settings);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [clientStored, setClientStored] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [sigDrafts, setSigDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    void backend.hasGmailClient().then(setClientStored);
+  }, []);
 
   const connect = async () => {
     setBusy(true);
     setMsg(null);
     try {
+      // blank fields reuse the client already in the keychain
       await backend.startOauth(clientId.trim(), clientSecret.trim());
-      await useSettings.getState().refreshAccount();
+      await useSettings.getState().refreshAccounts();
       await backend.syncNow();
       await useMail.getState().refresh();
-      setMsg("Connected. Syncing your inbox…");
+      setMsg("Connected. Syncing the inbox…");
+      setClientId("");
+      setClientSecret("");
     } catch (e) {
       setMsg(String(e));
     } finally {
@@ -71,58 +81,135 @@ function AccountTab() {
     }
   };
 
+  const move = (index: number, dir: -1 | 1) => {
+    const emails = accounts.accounts.map((a) => a.email);
+    const j = index + dir;
+    if (j < 0 || j >= emails.length) return;
+    [emails[index], emails[j]] = [emails[j], emails[index]];
+    void useSettings.getState().reorderAccounts(emails);
+  };
+
+  const saveSignature = (email: string) => {
+    void useSettings.getState().save({
+      signatures: { ...settings.signatures, [email]: sigDrafts[email] ?? "" },
+    });
+  };
+
   return (
     <>
-      <Section title="Connected account">
-        <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-4 py-3">
-          <div
-            className={`h-2 w-2 rounded-full ${account?.connected ? "bg-ok" : "bg-warn"}`}
-          />
-          <div className="flex-1">
-            <div className="text-[13px] text-ink">{account?.email ?? "—"}</div>
-            <div className="text-[11.5px] text-ink-3">
-              {account?.provider === "mock"
-                ? "Demo data — connect Gmail below for your real inbox"
-                : "Gmail"}
-            </div>
-          </div>
-          {account?.provider === "gmail" && (
-            <button
-              className={btnGhost}
-              onClick={async () => {
-                await backend.disconnect();
-                await useSettings.getState().refreshAccount();
-                await useMail.getState().refresh();
-              }}
-            >
-              Disconnect
-            </button>
-          )}
+      <Section
+        title="Accounts"
+        hint="Slot number = Ctrl+1…9 to switch instantly. Reorder to reassign slots. Each account gets its own signature."
+      >
+        <div className="space-y-3">
+          {accounts.accounts.map((a, i) => {
+            const active = a.email === accounts.active;
+            const sig = sigDrafts[a.email] ?? settings.signatures[a.email] ?? "";
+            const sigDirty =
+              (sigDrafts[a.email] ?? null) !== null &&
+              sigDrafts[a.email] !== (settings.signatures[a.email] ?? "");
+            return (
+              <div key={a.email} className="rounded-lg border border-line bg-surface p-3">
+                <div className="flex items-center gap-3">
+                  <span className="kbd">Ctrl+{i + 1}</span>
+                  <div className={`h-2 w-2 rounded-full ${a.connected ? "bg-ok" : "bg-warn"}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] text-ink">
+                      {a.email}
+                      {active && (
+                        <span className="ml-2 rounded bg-accent-dim px-1.5 py-0.5 text-[10.5px] text-accent-strong">
+                          active
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11.5px] capitalize text-ink-3">
+                      {a.provider === "mock" ? "demo data" : a.provider}
+                    </div>
+                  </div>
+                  <button className={btnGhost} onClick={() => move(i, -1)} disabled={i === 0} title="Move up (lower slot)">
+                    ↑
+                  </button>
+                  <button
+                    className={btnGhost}
+                    onClick={() => move(i, 1)}
+                    disabled={i === accounts.accounts.length - 1}
+                    title="Move down (higher slot)"
+                  >
+                    ↓
+                  </button>
+                  {!active && (
+                    <button
+                      className={btnGhost}
+                      onClick={() =>
+                        void useSettings
+                          .getState()
+                          .switchAccount(a.email)
+                          .then(() => useMail.getState().refresh())
+                      }
+                    >
+                      Switch
+                    </button>
+                  )}
+                  {a.provider === "gmail" && (
+                    <button
+                      className={btnGhost}
+                      onClick={async () => {
+                        await backend.disconnect(a.email);
+                        await useSettings.getState().refreshAccounts();
+                        await useMail.getState().refresh();
+                      }}
+                    >
+                      Disconnect
+                    </button>
+                  )}
+                </div>
+                <div className="mt-2">
+                  <textarea
+                    className={`${inputCls} min-h-14 resize-y`}
+                    placeholder={"Signature for this account, e.g.\nSwarnav S Pujari\nPujari Venture Partners"}
+                    value={sig}
+                    onChange={(e) =>
+                      setSigDrafts((d) => ({ ...d, [a.email]: e.target.value }))
+                    }
+                  />
+                  {sigDirty && (
+                    <button className={`${btnCls} mt-1.5`} onClick={() => saveSignature(a.email)}>
+                      Save signature
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </Section>
 
       <Section
-        title="Connect Gmail"
-        hint="Paste the OAuth client you created in Google Cloud Console (Desktop app type, Gmail API enabled — step-by-step in docs/SETUP.md). Credentials go straight into the Windows Credential Manager, never to disk."
+        title="Add a Gmail account"
+        hint={
+          clientStored
+            ? "Your OAuth client is already in the Windows Credential Manager — leave the fields blank and hit Connect. Add as many Gmail accounts as you like with the same client."
+            : "Paste the OAuth client from Google Cloud Console (Desktop app type, Gmail API enabled — step-by-step in docs/SETUP.md). It's stored in the Windows Credential Manager, never on disk."
+        }
       >
         <div className="space-y-2">
           <input
             className={inputCls}
-            placeholder="Client ID (…apps.googleusercontent.com)"
+            placeholder={clientStored ? "Client ID (stored — leave blank to reuse)" : "Client ID (…apps.googleusercontent.com)"}
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
           />
           <input
             className={inputCls}
             type="password"
-            placeholder="Client secret"
+            placeholder={clientStored ? "Client secret (stored — leave blank to reuse)" : "Client secret"}
             value={clientSecret}
             onChange={(e) => setClientSecret(e.target.value)}
           />
           <div className="flex items-center gap-3">
             <button
               className={btnCls}
-              disabled={!clientId.trim() || !clientSecret.trim() || busy || !isTauri}
+              disabled={busy || !isTauri || (!clientStored && (!clientId.trim() || !clientSecret.trim()))}
               onClick={connect}
             >
               {busy ? "Waiting for browser consent…" : "Connect Gmail"}
@@ -135,6 +222,15 @@ function AccountTab() {
             {msg && <span className="text-[12px] text-ink-2">{msg}</span>}
           </div>
         </div>
+      </Section>
+
+      <Section
+        title="Add an Outlook account"
+        hint="Microsoft Graph support is scaffolded and lands next release. It will use an Azure app registration (public client + PKCE, Mail.ReadWrite + Mail.Send) the same way Gmail uses its OAuth client — setup steps are already drafted in docs/SETUP.md."
+      >
+        <button className={btnGhost} disabled>
+          Coming in v0.3
+        </button>
       </Section>
     </>
   );

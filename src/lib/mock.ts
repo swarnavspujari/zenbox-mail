@@ -8,7 +8,7 @@ import type {
   MailView,
 } from "./ipc";
 import type {
-  AccountInfo,
+  AccountsState,
   AiProviderId,
   DraftRequest,
   KnowledgeBase,
@@ -21,7 +21,7 @@ import type {
   ThreadId,
   ZeroEvent,
 } from "./types";
-import { buildSeedData } from "./mock-data";
+import { buildSeedData, DEMO_ACCOUNT, DEMO_ACCOUNT_2 } from "./mock-data";
 import {
   BUNDLED_CELEBRATIONS,
   defaultKnowledgeBase,
@@ -35,31 +35,49 @@ interface PersistedState {
     string,
     Partial<Pick<Thread, "inInbox" | "unread" | "snoozedUntil" | "labels" | "starred">>
   >;
+  trashed: string[];
   settings: Settings;
   kb: KnowledgeBase;
   streaks: Streaks;
   keys: Partial<Record<AiProviderId, string>>;
+  activeAccount: string;
+  accountOrder: string[];
 }
 
 function loadPersisted(): PersistedState {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) return JSON.parse(raw) as PersistedState;
-  } catch {
-    // corrupt state — start fresh
-  }
-  return {
+  const fresh: PersistedState = {
     threadPatches: {},
+    trashed: [],
     settings: defaultSettings(),
     kb: defaultKnowledgeBase(),
     streaks: { daily: 0, weekly: 0, lastZeroDay: null },
     keys: {},
+    activeAccount: DEMO_ACCOUNT,
+    accountOrder: [DEMO_ACCOUNT, DEMO_ACCOUNT_2],
   };
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const loaded = JSON.parse(raw) as Partial<PersistedState>;
+      const merged = { ...fresh, ...loaded };
+      // settings gained fields across versions — merge defaults in
+      merged.settings = { ...fresh.settings, ...merged.settings };
+      merged.settings.shortcuts = {
+        ...fresh.settings.shortcuts,
+        ...merged.settings.shortcuts,
+      };
+      return merged;
+    }
+  } catch {
+    // corrupt state — start fresh
+  }
+  return fresh;
 }
 
 export class MockBackend implements Backend {
   private threads: Thread[];
   private messages: Map<string, Message[]>;
+  private accountOf: Map<string, string>;
   private state: PersistedState;
   private listeners = new Set<() => void>();
   private cancelFlags = new Map<number, boolean>();
@@ -69,13 +87,22 @@ export class MockBackend implements Backend {
     const seed = buildSeedData();
     this.threads = seed.threads;
     this.messages = seed.messages;
+    this.accountOf = seed.accountOf;
     this.state = loadPersisted();
     for (const t of this.threads) {
       Object.assign(t, this.state.threadPatches[t.id]);
     }
+    this.threads = this.threads.filter((t) => !this.state.trashed.includes(t.id));
     // Return snoozed threads whose timer already elapsed while app was closed.
     this.wakeDueSnoozes();
     setInterval(() => this.wakeDueSnoozes(), 30_000);
+  }
+
+  private inActiveAccount(t: Thread): boolean {
+    return (
+      (this.accountOf.get(t.id) ?? this.state.activeAccount) ===
+      this.state.activeAccount
+    );
   }
 
   private persist() {
@@ -106,28 +133,57 @@ export class MockBackend implements Backend {
     if (woke) this.notify();
   }
 
-  async getAccount(): Promise<AccountInfo> {
-    return { email: "demo@zenbox.local", provider: "mock", connected: true };
+  private accountsState(): AccountsState {
+    return {
+      accounts: this.state.accountOrder.map((email) => ({
+        email,
+        provider: "mock" as const,
+        connected: true,
+      })),
+      active: this.state.activeAccount,
+    };
   }
-  async startOauth(): Promise<AccountInfo> {
+
+  async getAccounts(): Promise<AccountsState> {
+    return this.accountsState();
+  }
+  async switchAccount(email: string): Promise<AccountsState> {
+    if (this.state.accountOrder.includes(email)) {
+      this.state.activeAccount = email;
+      this.persist();
+    }
+    return this.accountsState();
+  }
+  async reorderAccounts(emails: string[]): Promise<AccountsState> {
+    if (emails.length === this.state.accountOrder.length) {
+      this.state.accountOrder = emails;
+      this.persist();
+    }
+    return this.accountsState();
+  }
+  async hasGmailClient(): Promise<boolean> {
+    return false;
+  }
+  async startOauth(): Promise<AccountsState> {
     throw new Error(
       "OAuth needs the desktop app (Rust core). The browser build runs in demo mode."
     );
   }
-  async disconnect() {}
+  async disconnect(): Promise<AccountsState> {
+    return this.accountsState();
+  }
   async syncNow() {
     this.wakeDueSnoozes();
   }
 
   async listThreads(view: MailView): Promise<Thread[]> {
     const byDate = (a: Thread, b: Thread) => b.lastDate - a.lastDate;
+    const mine = this.threads.filter((t) => this.inActiveAccount(t));
     if (view === "inbox")
-      return this.threads.filter((t) => t.inInbox && t.snoozedUntil === null).sort(byDate);
+      return mine.filter((t) => t.inInbox && t.snoozedUntil === null).sort(byDate);
     if (view === "reminders")
-      return this.threads.filter((t) => t.snoozedUntil !== null).sort(byDate);
-    return this.threads
-      .filter((t) => !t.inInbox && t.snoozedUntil === null)
-      .sort(byDate);
+      return mine.filter((t) => t.snoozedUntil !== null).sort(byDate);
+    return mine.filter((t) => !t.inInbox && t.snoozedUntil === null).sort(byDate);
   }
 
   async getThread(id: ThreadId): Promise<Message[]> {
@@ -145,6 +201,18 @@ export class MockBackend implements Backend {
   async moveToInbox(id: ThreadId) {
     this.patch(id, { inInbox: true, snoozedUntil: null });
   }
+  async trashThread(id: ThreadId) {
+    this.threads = this.threads.filter((t) => t.id !== id);
+    this.messages.delete(id);
+    this.state.trashed.push(id);
+    this.persist();
+  }
+  async toggleStar(id: ThreadId): Promise<boolean> {
+    const t = this.threads.find((t) => t.id === id);
+    if (!t) return false;
+    this.patch(id, { starred: !t.starred });
+    return t.starred; // patched in place above
+  }
   async snoozeThread(id: ThreadId, untilMs: number) {
     this.patch(id, { inInbox: false, snoozedUntil: untilMs });
   }
@@ -152,6 +220,11 @@ export class MockBackend implements Backend {
     this.patch(id, { unread: true });
     const msgs = this.messages.get(id);
     if (msgs?.length) msgs[msgs.length - 1].unread = true;
+  }
+  async markRead(id: ThreadId) {
+    this.patch(id, { unread: false });
+    const msgs = this.messages.get(id);
+    for (const m of msgs ?? []) m.unread = false;
   }
   async moveLabel(id: ThreadId, label: string) {
     const t = this.threads.find((t) => t.id === id);
@@ -210,6 +283,7 @@ export class MockBackend implements Backend {
         attachments: [],
       };
       this.messages.set(id, [msg]);
+      this.accountOf.set(id, this.state.activeAccount);
       this.threads.push({
         id,
         subject: mail.subject,
@@ -231,7 +305,7 @@ export class MockBackend implements Backend {
     const q = query.toLowerCase();
     if (!q) return [];
     const hits: SearchResult[] = [];
-    for (const t of this.threads) {
+    for (const t of this.threads.filter((t) => this.inActiveAccount(t))) {
       const msgs = this.messages.get(t.id) ?? [];
       const hay = [
         t.subject,
@@ -256,6 +330,7 @@ export class MockBackend implements Backend {
     const splits = this.state.settings.splits;
     let n = 0;
     for (const t of this.threads) {
+      if (!this.inActiveAccount(t)) continue;
       if (!t.inInbox || t.snoozedUntil !== null) continue;
       if (opts.olderThanDays > 0 && t.lastDate > cutoff) continue;
       if (opts.preserveUnread && t.unread) continue;

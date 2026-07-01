@@ -7,12 +7,13 @@ use rusqlite::Connection;
 use serde_json::Value;
 use std::collections::HashSet;
 
-/// Full reconcile: INBOX + recent archived threads. Returns true if
-/// anything changed (caller emits mail:updated).
+/// Full reconcile of one account: INBOX + recent archived threads. Returns
+/// true if anything changed (caller emits mail:updated).
 pub async fn full_sync(
     http: &reqwest::Client,
     session: &mut GmailSession,
     db: &std::sync::Mutex<Connection>,
+    account_id: &str,
 ) -> Result<bool, String> {
     let inbox = session.list_thread_ids(http, "in:inbox", 100).await?;
     let done = session
@@ -41,7 +42,7 @@ pub async fn full_sync(
 
         // Threads we think are in the inbox but the server no longer does
         // (archived elsewhere) — flip them locally.
-        let local_inbox: Vec<String> = store::list_threads(&conn, "inbox")?
+        let local_inbox: Vec<String> = store::list_threads(&conn, "inbox", account_id)?
             .into_iter()
             .map(|t| t.id)
             .collect();
@@ -66,7 +67,7 @@ pub async fn full_sync(
             let grew = existing
                 .map(|t| t.message_count < thread.message_count)
                 .unwrap_or(false);
-            store::upsert_thread(&conn, &thread, &msgs)?;
+            store::upsert_thread(&conn, account_id, &thread, &msgs)?;
             if was_snoozed && !grew {
                 // keep the local snooze: sync would otherwise resurface it
                 conn.execute(

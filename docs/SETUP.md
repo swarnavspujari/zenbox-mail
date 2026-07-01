@@ -1,4 +1,4 @@
-# Setup — Windows 11
+# Setup — Windows 11 (Linux notes at the end)
 
 ## 1. Install the toolchain (one time)
 
@@ -43,11 +43,38 @@ Notes:
 - Credentials are stored in the **Windows Credential Manager**, never on disk or in the repo.
 - Google shows an "unverified app" warning while your consent screen is in Testing status — that's your own app; click *Continue*.
 
-## 4. Add an AI key
+## 4. Add more accounts
 
-Settings → **AI Providers** → paste a key for Claude, OpenAI, or NVIDIA NIM → **Save** → **Test connection**. See [AI_PROVIDERS.md](AI_PROVIDERS.md).
+Settings → **Account** → *Add a Gmail account*. The same OAuth client serves every Gmail account — once it's stored, leave the fields blank and hit **Connect**; a browser consent opens for the new address (add it as a **Test user** on the consent screen first). Switch accounts with **Ctrl+1…9**; slots follow the order in Settings (reorder to reassign).
 
-## 5. Troubleshooting
+### Outlook (coming in v0.3)
+
+Microsoft Graph support is scaffolded. When it lands you'll need a (free) Azure **app registration** instead of a Google OAuth client:
+
+1. [portal.azure.com](https://portal.azure.com) → *Microsoft Entra ID* → *App registrations* → **New registration**.
+2. Supported account types: *Personal Microsoft accounts and org accounts*. Redirect URI: leave blank (ZenBox uses the loopback + PKCE public-client flow — no secret needed).
+3. API permissions: *Microsoft Graph → Delegated* → `Mail.ReadWrite`, `Mail.Send`, `offline_access`.
+4. Copy the **Application (client) ID** into ZenBox when the Outlook option activates.
+
+## 5. Add an AI key
+
+Settings → **AI Providers** → paste a key for Claude, OpenAI, or NVIDIA NIM → **Save** → **Test connection**. See [AI_PROVIDERS.md](AI_PROVIDERS.md). The default provider is **NVIDIA NIM with DeepSeek v4** (`deepseek-ai/deepseek-v4-pro`); `deepseek-v4-flash` is the faster/cheaper alternative — change the model string in Settings any time.
+
+## 6. Linux (Fedora & friends) — preview
+
+Tauri v2 builds natively on Linux (the webview is WebKitGTK). The keyboard map already uses `Ctrl` on Linux. Status: compile-checked in CI on every push; full smoke run is on the roadmap before we call it supported.
+
+Fedora build deps:
+
+```bash
+sudo dnf install webkit2gtk4.1-devel openssl-devel gtk3-devel librsvg2-devel libappindicator-gtk3-devel dbus-devel
+# then the usual: npm install && npm run app:dev
+```
+
+Debian/Ubuntu: `libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libssl-dev libdbus-1-dev`.
+Secrets on Linux use the Secret Service (GNOME Keyring / KWallet) via the same `keyring` crate.
+
+## 7. Troubleshooting
 
 | Symptom | Fix |
 |---|---|

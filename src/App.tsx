@@ -27,7 +27,7 @@ export default function App() {
   const toast = useUi((s) => s.toast);
   const openThreadId = useMail((s) => s.openThreadId);
   const loaded = useSettings((s) => s.loaded);
-  const account = useSettings((s) => s.account);
+  const accounts = useSettings((s) => s.accounts);
 
   useEffect(() => {
     void useSettings
@@ -68,7 +68,27 @@ export default function App() {
           </span>
         )}
         <div className="flex-1" />
-        <span className="text-[12px] text-ink-3">{account?.email}</span>
+        {accounts.accounts.length > 1 ? (
+          <select
+            value={accounts.active}
+            onChange={(e) => {
+              void useSettings
+                .getState()
+                .switchAccount(e.target.value)
+                .then(() => useMail.getState().refresh());
+            }}
+            title="Switch account (Ctrl+1…9)"
+            className="rounded-md border border-line bg-raised px-2 py-1 text-[12px] text-ink-2 outline-none hover:border-line-strong"
+          >
+            {accounts.accounts.map((a, i) => (
+              <option key={a.email} value={a.email}>
+                {i + 1} · {a.email}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="text-[12px] text-ink-3">{accounts.active}</span>
+        )}
         <button
           className="rounded px-2 py-1 text-[12px] text-ink-2 hover:bg-hover"
           onClick={() => useUi.getState().setScreen("settings")}

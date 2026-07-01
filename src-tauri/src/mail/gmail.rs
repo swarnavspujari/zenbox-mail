@@ -21,22 +21,25 @@ pub struct GmailSession {
 impl GmailSession {
     /// Rebuild a session from keychain material (None if not connected).
     pub fn from_keychain(email: String) -> Option<Self> {
+        let refresh_token = secrets::get(&secrets::gmail_refresh_entry(&email))
+            .or_else(|| secrets::get(secrets::GMAIL_REFRESH_TOKEN_LEGACY))?;
         Some(Self {
             email,
             client_id: secrets::get(secrets::GMAIL_CLIENT_ID)?,
             client_secret: secrets::get(secrets::GMAIL_CLIENT_SECRET)?,
-            refresh_token: secrets::get(secrets::GMAIL_REFRESH_TOKEN)?,
+            refresh_token,
             access_token: None,
             label_ids: Default::default(),
         })
     }
 
     pub fn new_connected(email: String, access_token: String, expires_in: i64) -> Option<Self> {
+        let refresh_token = secrets::get(&secrets::gmail_refresh_entry(&email))?;
         Some(Self {
             email,
             client_id: secrets::get(secrets::GMAIL_CLIENT_ID)?,
             client_secret: secrets::get(secrets::GMAIL_CLIENT_SECRET)?,
-            refresh_token: secrets::get(secrets::GMAIL_REFRESH_TOKEN)?,
+            refresh_token,
             access_token: Some((
                 access_token,
                 Instant::now() + Duration::from_secs(expires_in.max(60) as u64 - 60),
@@ -222,6 +225,13 @@ impl GmailSession {
         )
         .await
         .map(|_| ())
+    }
+
+    /// Move a thread to Gmail's Trash (recoverable server-side for 30 days).
+    pub async fn trash_thread(&mut self, http: &reqwest::Client, id: &str) -> Result<(), String> {
+        self.post_json(http, &format!("{BASE}/threads/{id}/trash"), json!({}))
+            .await
+            .map(|_| ())
     }
 
     pub async fn send(

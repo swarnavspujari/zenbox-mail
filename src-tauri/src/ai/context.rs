@@ -88,19 +88,23 @@ struct AttachmentRow {
     cached_text: Option<String>,
 }
 
-/// Assemble everything for a draft/ask request. `session` is Some when a
-/// real Gmail account is connected (enables attachment fetches).
+/// Assemble everything for a draft/ask request. `sessions` holds live Gmail
+/// sessions per account (enables attachment fetches for real threads).
 pub async fn assemble(
     db: &std::sync::Mutex<Connection>,
     http: &reqwest::Client,
-    session: &tokio::sync::Mutex<Option<GmailSession>>,
+    sessions: &tokio::sync::Mutex<std::collections::HashMap<String, GmailSession>>,
     req: &DraftRequest,
     multimodal: bool,
 ) -> Result<AssembledContext, String> {
-    let (kb, account, messages, att_rows) = {
+    let (kb, account, thread_account, messages, att_rows) = {
         let conn = db.lock().unwrap();
         let kb = store::get_kb(&conn);
-        let account = store::get_account(&conn);
+        let account = store::active_account(&conn);
+        let thread_account = req
+            .thread_id
+            .as_ref()
+            .and_then(|id| store::account_of_thread(&conn, id));
         let messages = match &req.thread_id {
             Some(id) => store::get_messages(&conn, id)?,
             None => vec![],
@@ -125,7 +129,7 @@ pub async fn assemble(
                 });
             }
         }
-        (kb, account, messages, att_rows)
+        (kb, account, thread_account, messages, att_rows)
     };
 
     let system = build_system(&kb, &account.email);
@@ -171,7 +175,7 @@ pub async fn assemble(
         // images → multimodal blocks
         if attachments::is_image(&row.mime) {
             if multimodal && images.len() < MAX_IMAGES && row.size <= MAX_IMAGE_BYTES {
-                if let Some(bytes) = fetch_bytes(http, session, row).await {
+                if let Some(bytes) = fetch_bytes(http, sessions, thread_account.as_deref(), row).await {
                     use base64::Engine;
                     images.push((
                         row.mime.clone(),
@@ -196,7 +200,9 @@ pub async fn assemble(
         }
         let text = if let Some(t) = &row.cached_text {
             Some(t.clone())
-        } else if let Some(bytes) = fetch_bytes(http, session, row).await {
+        } else if let Some(bytes) =
+            fetch_bytes(http, sessions, thread_account.as_deref(), row).await
+        {
             attachments::extract_text(&row.filename, &row.mime, &bytes)
         } else {
             None
@@ -252,14 +258,15 @@ pub async fn assemble(
 
 async fn fetch_bytes(
     http: &reqwest::Client,
-    session: &tokio::sync::Mutex<Option<GmailSession>>,
+    sessions: &tokio::sync::Mutex<std::collections::HashMap<String, GmailSession>>,
+    account: Option<&str>,
     row: &AttachmentRow,
 ) -> Option<Vec<u8>> {
     let remote_id = row.remote_id.as_ref()?;
     if row.size > 8_000_000 {
         return None;
     }
-    let mut guard = session.lock().await;
-    let s = guard.as_mut()?;
+    let mut guard = sessions.lock().await;
+    let s = guard.get_mut(account?)?;
     s.get_attachment_bytes(http, &row.message_id, remote_id).await.ok()
 }

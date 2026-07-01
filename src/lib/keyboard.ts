@@ -38,9 +38,10 @@ export function eventToken(e: KeyboardEvent): string | null {
   const parts: string[] = [];
   if (e.ctrlKey || e.metaKey) parts.push("mod");
   if (e.altKey) parts.push("alt");
-  // For printable characters shift is already baked into e.key ("?" not "/"),
-  // so only non-printables carry an explicit shift+ prefix.
-  if (e.shiftKey && key.length > 1) parts.push("shift");
+  // Symbols already encode shift in e.key ("?" not "/"), so they stay bare.
+  // Letters ("Shift+E") and non-printables ("Shift+Tab") get the prefix.
+  const isLetter = key.length === 1 && key >= "a" && key <= "z";
+  if (e.shiftKey && (key.length > 1 || isLetter)) parts.push("shift");
   parts.push(key);
   return parts.join("+");
 }

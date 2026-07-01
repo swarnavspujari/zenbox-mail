@@ -9,7 +9,12 @@ pub const AI_OPENAI: &str = "ai:openai";
 pub const AI_NIM: &str = "ai:nim";
 pub const GMAIL_CLIENT_ID: &str = "gmail:client_id";
 pub const GMAIL_CLIENT_SECRET: &str = "gmail:client_secret";
-pub const GMAIL_REFRESH_TOKEN: &str = "gmail:refresh_token";
+/// v0.1 single-account name; kept as a read fallback.
+pub const GMAIL_REFRESH_TOKEN_LEGACY: &str = "gmail:refresh_token";
+
+pub fn gmail_refresh_entry(email: &str) -> String {
+    format!("gmail:refresh_token:{email}")
+}
 
 pub fn ai_key_entry(provider: &str) -> Option<&'static str> {
     match provider {

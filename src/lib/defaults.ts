@@ -33,14 +33,21 @@ export const DEFAULT_SPLITS: Split[] = [
   },
 ];
 
+// Aligned with Superhuman v7 (Windows & Linux edition): A reply-all, S star,
+// # trash, Shift+E mark not done, U toggles read/unread, G-then-O Other,
+// Ctrl+Shift+Enter send & mark done, Ctrl+1-9 switch accounts.
 export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "palette.open": "mod+k",
   compose: "c",
   "thread.done": "e",
+  "thread.notDone": "shift+e",
   "thread.snooze": "h",
   "thread.reply": "r",
+  "thread.replyAll": "a",
   "thread.forward": "f",
   "thread.replyAllOrOpen": "enter",
+  "thread.star": "s",
+  "thread.trash": "#",
   "list.next": "j|down",
   "list.prev": "k|up",
   "thread.unread": "u",
@@ -50,21 +57,33 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "split.next": "tab",
   "split.prev": "shift+tab",
   "goto.inbox": "g i",
+  "goto.other": "g o",
   "goto.done": "g e",
   "goto.reminders": "g h",
   "compose.ai": "mod+j",
   "compose.send": "mod+enter",
+  "compose.sendDone": "mod+shift+enter",
   "thread.cycleSuggestion": "tab",
   back: "escape",
   "inbox.zeroSweep": "",
   "sync.now": "",
   "settings.open": "mod+,",
+  "account.1": "mod+1",
+  "account.2": "mod+2",
+  "account.3": "mod+3",
+  "account.4": "mod+4",
+  "account.5": "mod+5",
+  "account.6": "mod+6",
+  "account.7": "mod+7",
+  "account.8": "mod+8",
+  "account.9": "mod+9",
 };
 
 export function defaultSettings(): Settings {
   return {
     splits: DEFAULT_SPLITS.map((s) => ({ ...s, rules: [...s.rules] })),
-    defaultAiProvider: "claude",
+    // NIM/DeepSeek is the default because it's the key the user supplied
+    defaultAiProvider: "nim",
     providers: [
       {
         id: "claude",
@@ -83,13 +102,14 @@ export function defaultSettings(): Settings {
       {
         id: "nim",
         label: "NVIDIA NIM",
-        model: "meta/llama-3.3-70b-instruct",
+        model: "deepseek-ai/deepseek-v4-pro",
         baseUrl: "https://integrate.api.nvidia.com/v1",
         hasKey: false,
       },
     ],
     celebrationDir: null,
     shortcuts: { ...DEFAULT_SHORTCUTS },
+    signatures: {},
   };
 }
 

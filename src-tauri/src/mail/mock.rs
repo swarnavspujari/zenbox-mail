@@ -24,10 +24,13 @@ struct Seed {
     starred: bool,
     labels: Vec<&'static str>,
     in_inbox: bool,
+    account: &'static str,
     msgs: Vec<SeedMsg>,
 }
 
 const ME: &str = "you@zenbox.local";
+const A1: &str = crate::store::DEMO_ACCOUNT;
+const A2: &str = crate::store::DEMO_ACCOUNT_2;
 
 pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
     let count: i64 = conn
@@ -48,6 +51,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: true,
             labels: vec!["IMPORTANT"],
             in_inbox: true,
+            account: A1,
             msgs: vec![
                 SeedMsg {
                     from: "maya@heliosrobotics.io",
@@ -77,6 +81,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec!["IMPORTANT"],
             in_inbox: true,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "dev.arora@granitecapital.com",
                 from_name: "Dev Arora",
@@ -94,6 +99,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec!["IMPORTANT"],
             in_inbox: true,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "priya@zenboxventures.com",
                 from_name: "Priya Nair",
@@ -114,6 +120,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec!["IMPORTANT"],
             in_inbox: true,
+            account: A1,
             msgs: vec![
                 SeedMsg {
                     from: "james@thirdactvc.com",
@@ -143,6 +150,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec!["CALENDAR"],
             in_inbox: true,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "calendar-invite@google.com",
                 from_name: "Google Calendar",
@@ -160,6 +168,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec!["CALENDAR"],
             in_inbox: true,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "events@saastrix.com",
                 from_name: "SaaStrix Events",
@@ -177,6 +186,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec![],
             in_inbox: true,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "connie@strictlyvc.com",
                 from_name: "StrictlyVC",
@@ -194,6 +204,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec![],
             in_inbox: true,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "lenny@substack.com",
                 from_name: "Lenny Rachitsky",
@@ -211,6 +222,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec![],
             in_inbox: true,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "notifications@github.com",
                 from_name: "GitHub",
@@ -228,6 +240,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec![],
             in_inbox: true,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "no-reply@mercury.com",
                 from_name: "Mercury",
@@ -245,6 +258,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: true,
             labels: vec!["IMPORTANT"],
             in_inbox: true,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "ops@pujarivp.com",
                 from_name: "Fund Ops",
@@ -262,6 +276,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec![],
             in_inbox: true,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "sofia@talentfoundry.co",
                 from_name: "Sofia Reyes",
@@ -279,6 +294,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             starred: false,
             labels: vec![],
             in_inbox: false,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "tickets@saastrannual.com",
                 from_name: "SaaStr Annual",
@@ -290,12 +306,68 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
                 attachments: vec![],
             }],
         },
+        // ---- second demo account (angel@) — proves Ctrl+1/2 switching ----
+        Seed {
+            id: "t2-safe-note",
+            subject: "SAFE for Brightloop — countersigned copy",
+            starred: true,
+            labels: vec!["IMPORTANT"],
+            in_inbox: true,
+            account: A2,
+            msgs: vec![SeedMsg {
+                from: "theo@brightloop.dev",
+                from_name: "Theo Lindqvist",
+                to: vec![ME.into()],
+                cc: vec![],
+                age_ms: 5 * H,
+                unread: true,
+                body: "Countersigned SAFE attached — $50k at a $6M cap, as discussed. Wiring details are in the doc. Thanks for moving fast on this, means a lot.\n\nTheo",
+                attachments: vec![("Brightloop_SAFE_countersigned.pdf", "application/pdf", 96_500, None)],
+            }],
+        },
+        Seed {
+            id: "t2-demo-day",
+            subject: "You're invited: Foundry Batch 12 Demo Day",
+            starred: false,
+            labels: vec!["CALENDAR"],
+            in_inbox: true,
+            account: A2,
+            msgs: vec![SeedMsg {
+                from: "events@foundryaccel.com",
+                from_name: "Foundry Accelerator",
+                to: vec![ME.into()],
+                cc: vec![],
+                age_ms: 20 * H,
+                unread: true,
+                body: "Invitation: Foundry Batch 12 Demo Day\nWhen: July 22, 2026, 1:00 PM (PT)\nWhere: Fort Mason, SF + livestream\n\n14 companies presenting. RSVP by the 10th for in-person seats.",
+                attachments: vec![],
+            }],
+        },
+        Seed {
+            id: "t2-angellist",
+            subject: "Your Q2 portfolio summary is ready",
+            starred: false,
+            labels: vec![],
+            in_inbox: true,
+            account: A2,
+            msgs: vec![SeedMsg {
+                from: "no-reply@angellist.com",
+                from_name: "AngelList",
+                to: vec![ME.into()],
+                cc: vec![],
+                age_ms: 2 * D,
+                unread: false,
+                body: "Your Q2 2026 portfolio summary: 11 active investments, 2 markups this quarter (Brightloop, Corvid Security), 1 write-down. Full report in your dashboard.",
+                attachments: vec![],
+            }],
+        },
         Seed {
             id: "t-done-memo",
             subject: "Investment memo feedback — Corvid Security",
             starred: false,
             labels: vec!["IMPORTANT"],
             in_inbox: false,
+            account: A1,
             msgs: vec![SeedMsg {
                 from: "priya@zenboxventures.com",
                 from_name: "Priya Nair",
@@ -376,7 +448,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             in_inbox: s.in_inbox,
             snoozed_until: None,
         };
-        store::upsert_thread(conn, &thread, &msgs)?;
+        store::upsert_thread(conn, s.account, &thread, &msgs)?;
     }
     Ok(())
 }

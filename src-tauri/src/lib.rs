@@ -18,7 +18,8 @@ use types::*;
 pub struct AppState {
     db: Mutex<Connection>,
     http: reqwest::Client,
-    gmail: tokio::sync::Mutex<Option<GmailSession>>,
+    /// One live session per connected Gmail account, keyed by email.
+    gmail: tokio::sync::Mutex<HashMap<String, GmailSession>>,
     cancels: Mutex<HashMap<u64, Arc<AtomicBool>>>,
 }
 
@@ -34,7 +35,7 @@ fn now_ms() -> i64 {
 }
 
 fn is_mock_id(id: &str) -> bool {
-    id.starts_with("t-")
+    id.starts_with("t-") || id.starts_with("t2-")
 }
 
 fn valid_id(id: &str) -> Result<(), String> {
@@ -44,14 +45,53 @@ fn valid_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
-// ---------------------------------------------------------------- account
+// ---------------------------------------------------------------- accounts
 
 #[tauri::command]
-fn get_account(state: State<'_, AppState>) -> AccountInfo {
+fn get_accounts(state: State<'_, AppState>) -> AccountsState {
     // boot breadcrumb: proves the webview⇄core IPC round-trip in dev logs
     #[cfg(debug_assertions)]
-    eprintln!("[ipc] get_account");
-    store::get_account(&state.db.lock().unwrap())
+    eprintln!("[ipc] get_accounts");
+    store::get_accounts(&state.db.lock().unwrap())
+}
+
+#[tauri::command]
+fn switch_account(state: State<'_, AppState>, email: String) -> Result<AccountsState, String> {
+    let conn = state.db.lock().unwrap();
+    let mut accounts = store::get_accounts(&conn);
+    if !accounts.accounts.iter().any(|a| a.email == email) {
+        return Err("unknown account".into());
+    }
+    accounts.active = email;
+    store::save_accounts(&conn, &accounts)?;
+    Ok(accounts)
+}
+
+#[tauri::command]
+fn reorder_accounts(state: State<'_, AppState>, emails: Vec<String>) -> Result<AccountsState, String> {
+    let conn = state.db.lock().unwrap();
+    let mut accounts = store::get_accounts(&conn);
+    if emails.len() != accounts.accounts.len() {
+        return Err("account list mismatch".into());
+    }
+    let mut reordered = vec![];
+    for email in &emails {
+        let a = accounts
+            .accounts
+            .iter()
+            .find(|a| &a.email == email)
+            .ok_or("unknown account in ordering")?;
+        reordered.push(a.clone());
+    }
+    accounts.accounts = reordered;
+    store::save_accounts(&conn, &accounts)?;
+    Ok(accounts)
+}
+
+#[tauri::command]
+fn has_gmail_client() -> bool {
+    secrets::get(secrets::GMAIL_CLIENT_ID).is_some()
+        && secrets::get(secrets::GMAIL_CLIENT_SECRET).is_some()
 }
 
 #[tauri::command]
@@ -60,65 +100,103 @@ async fn start_oauth(
     state: State<'_, AppState>,
     client_id: String,
     client_secret: String,
-) -> Result<AccountInfo, String> {
-    let client_id = client_id.trim().to_string();
-    let client_secret = client_secret.trim().to_string();
-    if client_id.is_empty() || client_secret.is_empty() {
-        return Err("client ID and secret are both required".into());
-    }
+) -> Result<AccountsState, String> {
+    // blank args = reuse the client already in the keychain
+    let client_id = if client_id.trim().is_empty() {
+        secrets::get(secrets::GMAIL_CLIENT_ID)
+            .ok_or("no OAuth client stored — paste the client ID and secret")?
+    } else {
+        client_id.trim().to_string()
+    };
+    let client_secret = if client_secret.trim().is_empty() {
+        secrets::get(secrets::GMAIL_CLIENT_SECRET)
+            .ok_or("no OAuth client stored — paste the client ID and secret")?
+    } else {
+        client_secret.trim().to_string()
+    };
     secrets::set(secrets::GMAIL_CLIENT_ID, &client_id)?;
     secrets::set(secrets::GMAIL_CLIENT_SECRET, &client_secret)?;
 
     let outcome = mail::oauth::run_flow(&state.http, &app, &client_id, &client_secret).await?;
-    secrets::set(secrets::GMAIL_REFRESH_TOKEN, &outcome.refresh_token)?;
-
     let email = GmailSession::profile_email(&state.http, &outcome.access_token).await?;
-    let account = AccountInfo { email: email.clone(), provider: "gmail".into(), connected: true };
-    {
+    secrets::set(&secrets::gmail_refresh_entry(&email), &outcome.refresh_token)?;
+
+    let accounts = {
         let conn = state.db.lock().unwrap();
-        store::set_json(&conn, "account", &account)?;
-        store::clear_mail(&conn)?; // drop demo data; real mail syncs in
-    }
-    let session = GmailSession::new_connected(email, outcome.access_token, outcome.expires_in)
+        let mut accounts = store::get_accounts(&conn);
+        // first real account replaces the demo pair (and their fixture mail)
+        if accounts.accounts.iter().all(|a| a.provider == "mock") {
+            for a in &accounts.accounts {
+                store::clear_account_mail(&conn, &a.email)?;
+            }
+            accounts.accounts.clear();
+        }
+        if !accounts.accounts.iter().any(|a| a.email == email) {
+            accounts.accounts.push(AccountInfo {
+                email: email.clone(),
+                provider: "gmail".into(),
+                connected: true,
+            });
+        }
+        accounts.active = email.clone();
+        store::save_accounts(&conn, &accounts)?;
+        accounts
+    };
+
+    let session = GmailSession::new_connected(email.clone(), outcome.access_token, outcome.expires_in)
         .ok_or("keychain readback failed")?;
-    *state.gmail.lock().await = Some(session);
+    state.gmail.lock().await.insert(email, session);
     sync_in_background(app);
-    Ok(account)
+    Ok(accounts)
 }
 
 #[tauri::command]
-async fn disconnect_account(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    secrets::delete(secrets::GMAIL_REFRESH_TOKEN);
-    secrets::delete(secrets::GMAIL_CLIENT_ID);
-    secrets::delete(secrets::GMAIL_CLIENT_SECRET);
-    *state.gmail.lock().await = None;
-    {
+async fn disconnect_account(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    email: String,
+) -> Result<AccountsState, String> {
+    secrets::delete(&secrets::gmail_refresh_entry(&email));
+    secrets::delete(secrets::GMAIL_REFRESH_TOKEN_LEGACY);
+    state.gmail.lock().await.remove(&email);
+    let accounts = {
         let conn = state.db.lock().unwrap();
-        let account = AccountInfo {
-            email: "demo@zenbox.local".into(),
-            provider: "mock".into(),
-            connected: true,
-        };
-        store::set_json(&conn, "account", &account)?;
-        store::clear_mail(&conn)?;
-        mail::mock::seed_if_empty(&conn)?;
-    }
+        store::clear_account_mail(&conn, &email)?;
+        let mut accounts = store::get_accounts(&conn);
+        accounts.accounts.retain(|a| a.email != email);
+        if accounts.accounts.is_empty() {
+            // back to demo mode
+            store::set_json(&conn, "accounts", &serde_json::Value::Null).ok();
+            conn.execute("DELETE FROM kv WHERE key = 'accounts'", []).ok();
+            let accounts = store::get_accounts(&conn);
+            mail::mock::seed_if_empty(&conn)?;
+            accounts
+        } else {
+            if accounts.active == email {
+                accounts.active = accounts.accounts[0].email.clone();
+            }
+            store::save_accounts(&conn, &accounts)?;
+            accounts
+        }
+    };
     let _ = app.emit("mail:updated", ());
-    Ok(())
+    Ok(accounts)
 }
 
 fn sync_in_background(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
-        let mut guard = state.gmail.lock().await;
-        if let Some(session) = guard.as_mut() {
-            match mail::sync::full_sync(&state.http, session, &state.db).await {
-                Ok(true) => {
-                    let _ = app.emit("mail:updated", ());
-                }
-                Ok(false) => {}
-                Err(e) => eprintln!("[sync] {e}"),
+        let mut changed = false;
+        let mut sessions = state.gmail.lock().await;
+        for (email, session) in sessions.iter_mut() {
+            match mail::sync::full_sync(&state.http, session, &state.db, email).await {
+                Ok(c) => changed |= c,
+                Err(e) => eprintln!("[sync:{email}] {e}"),
             }
+        }
+        drop(sessions);
+        if changed {
+            let _ = app.emit("mail:updated", ());
         }
     });
 }
@@ -129,10 +207,11 @@ async fn sync_now(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
         let conn = state.db.lock().unwrap();
         store::wake_due_snoozes(&conn, now_ms())?;
     }
-    let mut guard = state.gmail.lock().await;
-    if let Some(session) = guard.as_mut() {
-        mail::sync::full_sync(&state.http, session, &state.db).await?;
+    let mut sessions = state.gmail.lock().await;
+    for (email, session) in sessions.iter_mut() {
+        mail::sync::full_sync(&state.http, session, &state.db, email).await?;
     }
+    drop(sessions);
     let _ = app.emit("mail:updated", ());
     Ok(())
 }
@@ -144,7 +223,9 @@ fn list_threads(state: State<'_, AppState>, view: String) -> Result<Vec<Thread>,
     if !matches!(view.as_str(), "inbox" | "done" | "reminders") {
         return Err("invalid view".into());
     }
-    store::list_threads(&state.db.lock().unwrap(), &view)
+    let conn = state.db.lock().unwrap();
+    let active = store::get_accounts(&conn).active;
+    store::list_threads(&conn, &view, &active)
 }
 
 #[tauri::command]
@@ -156,13 +237,7 @@ async fn get_thread(state: State<'_, AppState>, thread_id: String) -> Result<Vec
         store::set_unread(&conn, &thread_id, false)?;
         msgs
     };
-    // mirror the read state to Gmail (best effort)
-    if !is_mock_id(&thread_id) {
-        let mut guard = state.gmail.lock().await;
-        if let Some(s) = guard.as_mut() {
-            let _ = s.modify_thread(&state.http, &thread_id, &[], &["UNREAD"]).await;
-        }
-    }
+    remote_modify(&state, &thread_id, &[], &["UNREAD"]).await.ok();
     Ok(msgs)
 }
 
@@ -171,7 +246,9 @@ fn search_threads(state: State<'_, AppState>, query: String) -> Result<Vec<Searc
     if query.len() > 200 {
         return Err("query too long".into());
     }
-    store::search(&state.db.lock().unwrap(), &query)
+    let conn = state.db.lock().unwrap();
+    let active = store::get_accounts(&conn).active;
+    store::search(&conn, &query, &active)
 }
 
 #[tauri::command]
@@ -181,6 +258,8 @@ fn list_labels(state: State<'_, AppState>) -> Result<Vec<String>, String> {
 
 // ---------------------------------------------------------------- triage
 
+/// Apply a label change on the server that owns this thread (no-op for
+/// fixture threads and disconnected accounts).
 async fn remote_modify(
     state: &State<'_, AppState>,
     thread_id: &str,
@@ -190,8 +269,13 @@ async fn remote_modify(
     if is_mock_id(thread_id) {
         return Ok(());
     }
-    let mut guard = state.gmail.lock().await;
-    if let Some(s) = guard.as_mut() {
+    let account = {
+        let conn = state.db.lock().unwrap();
+        store::account_of_thread(&conn, thread_id)
+    };
+    let Some(account) = account else { return Ok(()) };
+    let mut sessions = state.gmail.lock().await;
+    if let Some(s) = sessions.get_mut(&account) {
         s.modify_thread(&state.http, thread_id, add, remove).await?;
     }
     Ok(())
@@ -209,6 +293,42 @@ async fn move_to_inbox(state: State<'_, AppState>, thread_id: String) -> Result<
     valid_id(&thread_id)?;
     remote_modify(&state, &thread_id, &["INBOX"], &[]).await?;
     store::set_in_inbox(&state.db.lock().unwrap(), &thread_id, true)
+}
+
+#[tauri::command]
+async fn trash_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+    valid_id(&thread_id)?;
+    if !is_mock_id(&thread_id) {
+        let account = {
+            let conn = state.db.lock().unwrap();
+            store::account_of_thread(&conn, &thread_id)
+        };
+        if let Some(account) = account {
+            let mut sessions = state.gmail.lock().await;
+            if let Some(s) = sessions.get_mut(&account) {
+                s.trash_thread(&state.http, &thread_id).await?;
+            }
+        }
+    }
+    store::delete_thread(&state.db.lock().unwrap(), &thread_id)
+}
+
+#[tauri::command]
+async fn toggle_star(state: State<'_, AppState>, thread_id: String) -> Result<bool, String> {
+    valid_id(&thread_id)?;
+    let starred = {
+        let conn = state.db.lock().unwrap();
+        let t = store::get_thread(&conn, &thread_id).ok_or("unknown thread")?;
+        let starred = !t.starred;
+        store::set_starred(&conn, &thread_id, starred)?;
+        starred
+    };
+    if starred {
+        remote_modify(&state, &thread_id, &["STARRED"], &[]).await?;
+    } else {
+        remote_modify(&state, &thread_id, &[], &["STARRED"]).await?;
+    }
+    Ok(starred)
 }
 
 #[tauri::command]
@@ -233,6 +353,13 @@ async fn mark_unread(state: State<'_, AppState>, thread_id: String) -> Result<()
 }
 
 #[tauri::command]
+async fn mark_read(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+    valid_id(&thread_id)?;
+    remote_modify(&state, &thread_id, &[], &["UNREAD"]).await?;
+    store::set_unread(&state.db.lock().unwrap(), &thread_id, false)
+}
+
+#[tauri::command]
 async fn move_label(
     state: State<'_, AppState>,
     thread_id: String,
@@ -242,15 +369,23 @@ async fn move_label(
     if label.is_empty() || label.len() > 100 {
         return Err("invalid label".into());
     }
-    let added = store::toggle_label(&state.db.lock().unwrap(), &thread_id, &label)?;
+    let (added, account) = {
+        let conn = state.db.lock().unwrap();
+        (
+            store::toggle_label(&conn, &thread_id, &label)?,
+            store::account_of_thread(&conn, &thread_id),
+        )
+    };
     if !is_mock_id(&thread_id) {
-        let mut guard = state.gmail.lock().await;
-        if let Some(s) = guard.as_mut() {
-            let id = s.ensure_label_id(&state.http, &label).await?;
-            if added {
-                s.modify_thread(&state.http, &thread_id, &[id.as_str()], &[]).await?;
-            } else {
-                s.modify_thread(&state.http, &thread_id, &[], &[id.as_str()]).await?;
+        if let Some(account) = account {
+            let mut sessions = state.gmail.lock().await;
+            if let Some(s) = sessions.get_mut(&account) {
+                let id = s.ensure_label_id(&state.http, &label).await?;
+                if added {
+                    s.modify_thread(&state.http, &thread_id, &[id.as_str()], &[]).await?;
+                } else {
+                    s.modify_thread(&state.http, &thread_id, &[], &[id.as_str()]).await?;
+                }
             }
         }
     }
@@ -265,7 +400,8 @@ async fn bulk_archive(
 ) -> Result<i64, String> {
     let (targets, settings) = {
         let conn = state.db.lock().unwrap();
-        (store::inbox_threads_for_sweep(&conn)?, store::get_settings(&conn))
+        let active = store::get_accounts(&conn).active;
+        (store::inbox_threads_for_sweep(&conn, &active)?, store::get_settings(&conn))
     };
     let cutoff = now_ms() - opts.older_than_days * 24 * 3_600_000;
     let mut n = 0i64;
@@ -336,7 +472,10 @@ async fn send_mail(
             return Err(format!("\"{addr}\" is not a valid address"));
         }
     }
-    let account = store::get_account(&state.db.lock().unwrap());
+    let account = {
+        let conn = state.db.lock().unwrap();
+        store::active_account(&conn)
+    };
 
     if account.provider == "gmail" && !mail.thread_id.as_deref().map(is_mock_id).unwrap_or(false) {
         let in_reply_to: Option<String> = mail.thread_id.as_ref().and_then(|tid| {
@@ -350,10 +489,12 @@ async fn send_mail(
             .flatten()
         });
         let raw = mail::gmail::build_rfc822(&account.email, &mail, in_reply_to.as_deref());
-        let mut guard = state.gmail.lock().await;
-        let session = guard.as_mut().ok_or("Gmail session unavailable")?;
+        let mut sessions = state.gmail.lock().await;
+        let session = sessions
+            .get_mut(&account.email)
+            .ok_or("Gmail session unavailable for the active account")?;
         session.send(&state.http, &raw, mail.thread_id.as_deref()).await?;
-        drop(guard);
+        drop(sessions);
         sync_in_background(app);
         return Ok(());
     }
@@ -403,7 +544,7 @@ async fn send_mail(
             snoozed_until: None,
         },
     };
-    store::upsert_thread(&conn, &thread, &[(msg, None, vec![])])?;
+    store::upsert_thread(&conn, &account.email, &thread, &[(msg, None, vec![])])?;
     drop(conn);
     let _ = app.emit("mail:updated", ());
     Ok(())
@@ -457,7 +598,6 @@ fn set_ai_key(state: State<'_, AppState>, provider: String, key: String) -> Resu
         }
         secrets::set(entry, key)?;
     }
-    // reflect hasKey in stored settings
     let conn = state.db.lock().unwrap();
     let mut settings = store::get_settings(&conn);
     for p in settings.providers.iter_mut() {
@@ -626,21 +766,35 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             let conn = store::open(&data_dir.join("zenbox.db")).map_err(std::io::Error::other)?;
 
-            let account = store::get_account(&conn);
-            let gmail = if account.provider == "gmail" {
-                GmailSession::from_keychain(account.email.clone())
-            } else {
-                mail::mock::seed_if_empty(&conn).map_err(std::io::Error::other)?;
-                None
-            };
-            if account.provider == "gmail" && gmail.is_none() {
-                // tokens were removed out-of-band: fall back to demo mode
-                let _ = store::set_json(
-                    &conn,
-                    "account",
-                    &AccountInfo { email: "demo@zenbox.local".into(), provider: "mock".into(), connected: true },
-                );
-                let _ = mail::mock::seed_if_empty(&conn);
+            let accounts = store::get_accounts(&conn);
+            let mut sessions = HashMap::new();
+            let mut lost_accounts = vec![];
+            for a in &accounts.accounts {
+                match a.provider.as_str() {
+                    "gmail" => match GmailSession::from_keychain(a.email.clone()) {
+                        Some(s) => {
+                            sessions.insert(a.email.clone(), s);
+                        }
+                        None => lost_accounts.push(a.email.clone()),
+                    },
+                    _ => {
+                        mail::mock::seed_if_empty(&conn).map_err(std::io::Error::other)?;
+                    }
+                }
+            }
+            // tokens removed out-of-band: drop those accounts gracefully
+            if !lost_accounts.is_empty() {
+                let mut acc = accounts.clone();
+                acc.accounts.retain(|a| !lost_accounts.contains(&a.email));
+                if acc.accounts.is_empty() {
+                    conn.execute("DELETE FROM kv WHERE key = 'accounts'", []).ok();
+                    let _ = mail::mock::seed_if_empty(&conn);
+                } else {
+                    if !acc.accounts.iter().any(|a| a.email == acc.active) {
+                        acc.active = acc.accounts[0].email.clone();
+                    }
+                    let _ = store::save_accounts(&conn, &acc);
+                }
             }
 
             // allow a previously-configured celebration folder
@@ -660,9 +814,54 @@ pub fn run() {
             app.manage(AppState {
                 db: Mutex::new(conn),
                 http,
-                gmail: tokio::sync::Mutex::new(gmail),
+                gmail: tokio::sync::Mutex::new(sessions),
                 cancels: Mutex::new(HashMap::new()),
             });
+
+            // Dev-only: ZENBOX_AI_SMOKE=1 streams one real draft at startup and
+            // logs the result — end-to-end proof of context assembly + adapter
+            // + SSE parsing against the configured default provider.
+            #[cfg(debug_assertions)]
+            if std::env::var("ZENBOX_AI_SMOKE").is_ok() {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = handle.state::<AppState>();
+                    let settings = store::get_settings(&state.db.lock().unwrap());
+                    let p = match ai::resolve(&settings, None) {
+                        Ok(p) => p,
+                        Err(e) => return eprintln!("[ai-smoke] resolve: {e}"),
+                    };
+                    let req = DraftRequest {
+                        thread_id: Some("t-term-sheet".into()),
+                        instruction: "Summarize this thread in one short sentence.".into(),
+                        existing_text: None,
+                        provider_id: None,
+                    };
+                    let ctx = match ai::context::assemble(&state.db, &state.http, &state.gmail, &req, false).await {
+                        Ok(c) => c,
+                        Err(e) => return eprintln!("[ai-smoke] assemble: {e}"),
+                    };
+                    let mut acc = String::new();
+                    match ai::stream_draft(
+                        &state.http,
+                        &p,
+                        &ctx,
+                        |c| acc.push_str(&c),
+                        Arc::new(AtomicBool::new(false)),
+                    )
+                    .await
+                    {
+                        Ok(()) => eprintln!(
+                            "[ai-smoke] OK {} / {} — {} chars streamed: {}",
+                            p.id,
+                            p.model,
+                            acc.len(),
+                            acc.replace('\n', " ").chars().take(140).collect::<String>()
+                        ),
+                        Err(e) => eprintln!("[ai-smoke] stream: {e}"),
+                    }
+                });
+            }
 
             // background loop: snooze wake-ups every 30s, Gmail sync every 60s
             let handle = app.handle().clone();
@@ -678,17 +877,28 @@ pub fn run() {
                     };
                     let mut changed = !woke.is_empty();
                     {
-                        let mut guard = state.gmail.lock().await;
-                        if let Some(session) = guard.as_mut() {
-                            for id in &woke {
-                                if !is_mock_id(id) {
+                        let mut sessions = state.gmail.lock().await;
+                        for id in &woke {
+                            if is_mock_id(id) {
+                                continue;
+                            }
+                            let account = {
+                                let conn = state.db.lock().unwrap();
+                                store::account_of_thread(&conn, id)
+                            };
+                            if let Some(account) = account {
+                                if let Some(session) = sessions.get_mut(&account) {
                                     let _ = session
                                         .modify_thread(&state.http, id, &["INBOX", "UNREAD"], &[])
                                         .await;
                                 }
                             }
-                            if tick % 2 == 0 {
-                                if let Ok(c) = mail::sync::full_sync(&state.http, session, &state.db).await {
+                        }
+                        if tick % 2 == 0 {
+                            for (email, session) in sessions.iter_mut() {
+                                if let Ok(c) =
+                                    mail::sync::full_sync(&state.http, session, &state.db, email).await
+                                {
                                     changed |= c;
                                 }
                             }
@@ -702,7 +912,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_account,
+            get_accounts,
+            switch_account,
+            reorder_accounts,
+            has_gmail_client,
             start_oauth,
             disconnect_account,
             sync_now,
@@ -712,8 +925,11 @@ pub fn run() {
             list_labels,
             archive_thread,
             move_to_inbox,
+            trash_thread,
+            toggle_star,
             snooze_thread,
             mark_unread,
+            mark_read,
             move_label,
             bulk_archive,
             send_mail,
