@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+/*
+  ZenBox dark theme tokens.
+
+  Principle 1 — darken distant surfaces: base (furthest) is darkest; each
+  nearer layer (surface -> raised -> overlay) is lighter, as if lit from above.
+  Principle 4 — no pure black/white anywhere; body text is ~90% opacity to
+  prevent halation on OLED.
+  Principle 5 — accents are deepened: lower lightness, higher saturation than
+  their light-theme equivalents so they don't overpower text.
+*/
+:root {
+  /* Surfaces, furthest to nearest */
+  --bg-base: #0e1014;
+  --bg-surface: #14171d;
+  --bg-raised: #1b1f27;
+  --bg-overlay: #232834;
+  --bg-hover: #202531;
+  --bg-selected: #262d3d;
+
+  /* Text — never #fff; primary rides at 90% */
+  --text-primary: rgba(235, 238, 244, 0.9);
+  --text-secondary: rgba(200, 206, 218, 0.72);
+  --text-muted: rgba(170, 178, 194, 0.5);
+
+  /* Accents — deepened (saturated, mid-lightness) */
+  --accent: #6d7ff2;
+  --accent-strong: #8496ff;
+  --accent-dim: rgba(109, 127, 242, 0.16);
+  --success: #3ecf8e;
+  --warning: #e8b93e;
+  --danger: #e5645f;
+
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --focus-ring: 0 0 0 2px rgba(132, 150, 255, 0.75);
+
+  color-scheme: dark;
+}
+
+@theme {
+  --color-base: var(--bg-base);
+  --color-surface: var(--bg-surface);
+  --color-raised: var(--bg-raised);
+  --color-overlay: var(--bg-overlay);
+  --color-hover: var(--bg-hover);
+  --color-selected: var(--bg-selected);
+  --color-ink: var(--text-primary);
+  --color-ink-2: var(--text-secondary);
+  --color-ink-3: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-dim: var(--accent-dim);
+  --color-ok: var(--success);
+  --color-warn: var(--warning);
+  --color-bad: var(--danger);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "Consolas", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Visible keyboard focus everywhere (WCAG 2.4.7) */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: 4px;
+}
+
+::selection {
+  background: rgba(109, 127, 242, 0.35);
+}
+
+/* Scrollbars tuned for the dark surfaces */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+  background-clip: content-box;
+  border: 2px solid transparent;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Reading pane content may select text */
+.selectable,
+.selectable * {
+  user-select: text;
+}
+
+/* Keycap hint chips used in palette + shortcut help */
+.kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+@keyframes zb-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes zb-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.zb-fade-in {
+  animation: zb-fade-in 120ms ease-out;
+}
+.zb-pop-in {
+  animation: zb-pop-in 140ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}

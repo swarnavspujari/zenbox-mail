@@ -1,0 +1,149 @@
+// Global keyboard engine. Supports:
+//   - single keys:            "e", "/", "?"
+//   - modifier combos:        "mod+k" (mod = Ctrl on Windows, Cmd on macOS)
+//   - two-key chords:         "g i"  (press g, then i within the chord window)
+//   - alternatives:           "j|down"
+// While focus is in an input/textarea/contenteditable, only mod+ combos and
+// Escape fire, so typing never triggers actions.
+
+export interface Binding {
+  expr: string;
+  run: () => void;
+  when?: () => boolean;
+  /** Fire even while an overlay (palette/picker/celebration) is open. */
+  bypassOverlays?: boolean;
+}
+
+const CHORD_WINDOW_MS = 1200;
+
+function isEditable(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+/** Canonical token for a keydown event, e.g. "mod+k", "shift+tab", "?". */
+export function eventToken(e: KeyboardEvent): string | null {
+  let key = e.key;
+  if (key === "Shift" || key === "Control" || key === "Alt" || key === "Meta")
+    return null;
+  key = key.length === 1 ? key.toLowerCase() : key.toLowerCase();
+  if (key === "arrowdown") key = "down";
+  if (key === "arrowup") key = "up";
+  if (key === "arrowleft") key = "left";
+  if (key === "arrowright") key = "right";
+  if (key === " ") key = "space";
+
+  const parts: string[] = [];
+  if (e.ctrlKey || e.metaKey) parts.push("mod");
+  if (e.altKey) parts.push("alt");
+  // For printable characters shift is already baked into e.key ("?" not "/"),
+  // so only non-printables carry an explicit shift+ prefix.
+  if (e.shiftKey && key.length > 1) parts.push("shift");
+  parts.push(key);
+  return parts.join("+");
+}
+
+export function formatKeyExpr(expr: string): string {
+  if (!expr) return "";
+  const first = expr.split("|")[0];
+  const isMac =
+    typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent);
+  return first
+    .split(" ")
+    .map((part) =>
+      part
+        .split("+")
+        .map((p) => {
+          if (p === "mod") return isMac ? "⌘" : "Ctrl";
+          if (p === "shift") return "Shift";
+          if (p === "alt") return "Alt";
+          if (p === "escape") return "Esc";
+          if (p === "enter") return "Enter";
+          if (p === "tab") return "Tab";
+          if (p === "space") return "Space";
+          if (p === "down") return "↓";
+          if (p === "up") return "↑";
+          return p.length === 1 ? p.toUpperCase() : p;
+        })
+        .join("+")
+    )
+    .join(" then ");
+}
+
+interface Installed {
+  getBindings: () => Binding[];
+  isOverlayOpen: () => boolean;
+}
+
+let pendingPrefix: string | null = null;
+let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function installKeyboard(cfg: Installed): () => void {
+  const onKeyDown = (e: KeyboardEvent) => {
+    const token = eventToken(e);
+    if (!token) return;
+
+    const editable = isEditable(e.target);
+    const overlay = cfg.isOverlayOpen();
+    const bindings = cfg.getBindings();
+
+    const tryMatch = (candidate: string): Binding | null => {
+      for (const b of bindings) {
+        if (overlay && !b.bypassOverlays) continue;
+        if (editable && !candidate.includes("mod+") && candidate !== "escape")
+          continue;
+        for (const alt of b.expr.split("|")) {
+          const exprAlt = alt.trim();
+          if (exprAlt === candidate && (!b.when || b.when())) return b;
+        }
+      }
+      return null;
+    };
+
+    // Chord continuation takes priority.
+    if (pendingPrefix) {
+      const chord = `${pendingPrefix} ${token}`;
+      pendingPrefix = null;
+      clearTimeout(pendingTimer);
+      const hit = tryMatch(chord);
+      if (hit) {
+        e.preventDefault();
+        hit.run();
+        return;
+      }
+      // fall through: treat as a fresh keypress
+    }
+
+    // Is this token the start of any chord?
+    if (!editable && !overlay) {
+      const opensChord = bindings.some((b) =>
+        b.expr
+          .split("|")
+          .some(
+            (alt) =>
+              alt.trim().startsWith(`${token} `) && (!b.when || b.when())
+          )
+      );
+      if (opensChord) {
+        pendingPrefix = token;
+        clearTimeout(pendingTimer);
+        pendingTimer = setTimeout(() => {
+          pendingPrefix = null;
+        }, CHORD_WINDOW_MS);
+        e.preventDefault();
+        return;
+      }
+    }
+
+    const hit = tryMatch(token);
+    if (hit) {
+      e.preventDefault();
+      hit.run();
+    }
+  };
+
+  window.addEventListener("keydown", onKeyDown);
+  return () => window.removeEventListener("keydown", onKeyDown);
+}

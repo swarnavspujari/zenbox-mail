@@ -1,0 +1,413 @@
+// Full-featured in-browser backend. Serves the identical surface as the Rust
+// core so the app is usable (and demoable) with zero credentials. State
+// mutations persist to localStorage.
+import type {
+  Backend,
+  BulkArchiveOpts,
+  DraftStreamHandlers,
+  MailView,
+} from "./ipc";
+import type {
+  AccountInfo,
+  AiProviderId,
+  DraftRequest,
+  KnowledgeBase,
+  Message,
+  OutgoingMail,
+  SearchResult,
+  Settings,
+  Streaks,
+  Thread,
+  ThreadId,
+  ZeroEvent,
+} from "./types";
+import { buildSeedData } from "./mock-data";
+import {
+  BUNDLED_CELEBRATIONS,
+  defaultKnowledgeBase,
+  defaultSettings,
+} from "./defaults";
+
+const LS_KEY = "zenbox-mock-state-v1";
+
+interface PersistedState {
+  threadPatches: Record<
+    string,
+    Partial<Pick<Thread, "inInbox" | "unread" | "snoozedUntil" | "labels" | "starred">>
+  >;
+  settings: Settings;
+  kb: KnowledgeBase;
+  streaks: Streaks;
+  keys: Partial<Record<AiProviderId, string>>;
+}
+
+function loadPersisted(): PersistedState {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) return JSON.parse(raw) as PersistedState;
+  } catch {
+    // corrupt state — start fresh
+  }
+  return {
+    threadPatches: {},
+    settings: defaultSettings(),
+    kb: defaultKnowledgeBase(),
+    streaks: { daily: 0, weekly: 0, lastZeroDay: null },
+    keys: {},
+  };
+}
+
+export class MockBackend implements Backend {
+  private threads: Thread[];
+  private messages: Map<string, Message[]>;
+  private state: PersistedState;
+  private listeners = new Set<() => void>();
+  private cancelFlags = new Map<number, boolean>();
+  private aiSeq = 1;
+
+  constructor() {
+    const seed = buildSeedData();
+    this.threads = seed.threads;
+    this.messages = seed.messages;
+    this.state = loadPersisted();
+    for (const t of this.threads) {
+      Object.assign(t, this.state.threadPatches[t.id]);
+    }
+    // Return snoozed threads whose timer already elapsed while app was closed.
+    this.wakeDueSnoozes();
+    setInterval(() => this.wakeDueSnoozes(), 30_000);
+  }
+
+  private persist() {
+    localStorage.setItem(LS_KEY, JSON.stringify(this.state));
+  }
+
+  private patch(id: ThreadId, p: PersistedState["threadPatches"][string]) {
+    const t = this.threads.find((t) => t.id === id);
+    if (!t) return;
+    Object.assign(t, p);
+    this.state.threadPatches[id] = { ...this.state.threadPatches[id], ...p };
+    this.persist();
+  }
+
+  private notify() {
+    for (const cb of this.listeners) cb();
+  }
+
+  private wakeDueSnoozes() {
+    const now = Date.now();
+    let woke = false;
+    for (const t of this.threads) {
+      if (t.snoozedUntil !== null && t.snoozedUntil <= now) {
+        this.patch(t.id, { snoozedUntil: null, inInbox: true, unread: true });
+        woke = true;
+      }
+    }
+    if (woke) this.notify();
+  }
+
+  async getAccount(): Promise<AccountInfo> {
+    return { email: "demo@zenbox.local", provider: "mock", connected: true };
+  }
+  async startOauth(): Promise<AccountInfo> {
+    throw new Error(
+      "OAuth needs the desktop app (Rust core). The browser build runs in demo mode."
+    );
+  }
+  async disconnect() {}
+  async syncNow() {
+    this.wakeDueSnoozes();
+  }
+
+  async listThreads(view: MailView): Promise<Thread[]> {
+    const byDate = (a: Thread, b: Thread) => b.lastDate - a.lastDate;
+    if (view === "inbox")
+      return this.threads.filter((t) => t.inInbox && t.snoozedUntil === null).sort(byDate);
+    if (view === "reminders")
+      return this.threads.filter((t) => t.snoozedUntil !== null).sort(byDate);
+    return this.threads
+      .filter((t) => !t.inInbox && t.snoozedUntil === null)
+      .sort(byDate);
+  }
+
+  async getThread(id: ThreadId): Promise<Message[]> {
+    const msgs = this.messages.get(id);
+    if (!msgs) throw new Error(`unknown thread ${id}`);
+    // Opening a thread marks it read (matches Gmail + the Rust core).
+    for (const m of msgs) m.unread = false;
+    this.patch(id, { unread: false });
+    return msgs;
+  }
+
+  async archiveThread(id: ThreadId) {
+    this.patch(id, { inInbox: false, snoozedUntil: null });
+  }
+  async moveToInbox(id: ThreadId) {
+    this.patch(id, { inInbox: true, snoozedUntil: null });
+  }
+  async snoozeThread(id: ThreadId, untilMs: number) {
+    this.patch(id, { inInbox: false, snoozedUntil: untilMs });
+  }
+  async markUnread(id: ThreadId) {
+    this.patch(id, { unread: true });
+    const msgs = this.messages.get(id);
+    if (msgs?.length) msgs[msgs.length - 1].unread = true;
+  }
+  async moveLabel(id: ThreadId, label: string) {
+    const t = this.threads.find((t) => t.id === id);
+    if (!t) return;
+    const labels = t.labels.includes(label)
+      ? t.labels.filter((l) => l !== label)
+      : [...t.labels, label];
+    this.patch(id, { labels });
+  }
+  async listLabels() {
+    const set = new Set<string>(["IMPORTANT", "CALENDAR", "Deals", "LPs", "Personal"]);
+    for (const t of this.threads) for (const l of t.labels) set.add(l);
+    return [...set];
+  }
+
+  async sendMail(mail: OutgoingMail) {
+    const nowMs = Date.now();
+    if (mail.threadId) {
+      const msgs = this.messages.get(mail.threadId);
+      const t = this.threads.find((t) => t.id === mail.threadId);
+      if (msgs && t) {
+        msgs.push({
+          id: `${mail.threadId}-m${msgs.length + 1}`,
+          threadId: mail.threadId,
+          from: "you@zenbox.local",
+          fromName: "You",
+          to: mail.to,
+          cc: mail.cc,
+          subject: mail.subject,
+          snippet: mail.bodyText.slice(0, 120),
+          bodyText: mail.bodyText,
+          bodyHtml: null,
+          date: nowMs,
+          unread: false,
+          attachments: [],
+        });
+        t.messageCount = msgs.length;
+        t.lastDate = nowMs;
+        t.snippet = mail.bodyText.slice(0, 120);
+      }
+    } else {
+      const id = `t-sent-${nowMs}`;
+      const msg: Message = {
+        id: `${id}-m1`,
+        threadId: id,
+        from: "you@zenbox.local",
+        fromName: "You",
+        to: mail.to,
+        cc: mail.cc,
+        subject: mail.subject,
+        snippet: mail.bodyText.slice(0, 120),
+        bodyText: mail.bodyText,
+        bodyHtml: null,
+        date: nowMs,
+        unread: false,
+        attachments: [],
+      };
+      this.messages.set(id, [msg]);
+      this.threads.push({
+        id,
+        subject: mail.subject,
+        snippet: msg.snippet,
+        participants: ["You"],
+        messageCount: 1,
+        lastDate: nowMs,
+        unread: false,
+        starred: false,
+        labels: [],
+        inInbox: false, // sent mail doesn't land in your own inbox
+        snoozedUntil: null,
+      });
+    }
+    this.notify();
+  }
+
+  async search(query: string): Promise<SearchResult[]> {
+    const q = query.toLowerCase();
+    if (!q) return [];
+    const hits: SearchResult[] = [];
+    for (const t of this.threads) {
+      const msgs = this.messages.get(t.id) ?? [];
+      const hay = [
+        t.subject,
+        ...msgs.map((m) => `${m.fromName} ${m.from} ${m.bodyText}`),
+      ]
+        .join("\n")
+        .toLowerCase();
+      if (hay.includes(q)) {
+        hits.push({
+          threadId: t.id,
+          subject: t.subject,
+          snippet: t.snippet,
+          lastDate: t.lastDate,
+        });
+      }
+    }
+    return hits.sort((a, b) => b.lastDate - a.lastDate);
+  }
+
+  async bulkArchive(opts: BulkArchiveOpts): Promise<number> {
+    const cutoff = Date.now() - opts.olderThanDays * 24 * 3600_000;
+    const splits = this.state.settings.splits;
+    let n = 0;
+    for (const t of this.threads) {
+      if (!t.inInbox || t.snoozedUntil !== null) continue;
+      if (opts.olderThanDays > 0 && t.lastDate > cutoff) continue;
+      if (opts.preserveUnread && t.unread) continue;
+      if (opts.preserveStarred && t.starred) continue;
+      if (opts.splitId && assignSplit(t, splits) !== opts.splitId) continue;
+      this.patch(t.id, { inInbox: false });
+      n++;
+    }
+    if (n) this.notify();
+    return n;
+  }
+
+  async getSettings() {
+    return this.state.settings;
+  }
+  async saveSettings(settings: Settings) {
+    this.state.settings = settings;
+    this.persist();
+  }
+  async getKnowledgeBase() {
+    return this.state.kb;
+  }
+  async saveKnowledgeBase(kb: KnowledgeBase) {
+    this.state.kb = kb;
+    this.persist();
+  }
+
+  async setAiKey(provider: AiProviderId, key: string) {
+    this.state.keys[provider] = key;
+    const p = this.state.settings.providers.find((p) => p.id === provider);
+    if (p) p.hasKey = key.length > 0;
+    this.persist();
+  }
+  async testAiProvider(provider: AiProviderId) {
+    const key = this.state.keys[provider];
+    if (!key)
+      return { ok: false, message: "No key saved. Real calls need the desktop app." };
+    return {
+      ok: true,
+      message: "Key saved (demo mode — real network test runs in the desktop app).",
+    };
+  }
+
+  aiDraft(req: DraftRequest, handlers: DraftStreamHandlers): () => void {
+    const id = this.aiSeq++;
+    this.cancelFlags.set(id, false);
+    const kb = this.state.kb;
+    const thread = req.threadId ? this.threads.find((t) => t.id === req.threadId) : null;
+    const msgs = req.threadId ? this.messages.get(req.threadId) ?? [] : [];
+    const last = msgs[msgs.length - 1];
+
+    let body: string;
+    if (req.existingText) {
+      body = `${req.existingText.trim()}\n\n[Demo edit applied: "${req.instruction}"]`;
+    } else {
+      const greeting = last ? `Hi ${last.fromName.split(" ")[0]},` : "Hi,";
+      const ctx = thread
+        ? `Thanks for the note on "${thread.subject}".`
+        : "";
+      const instructionLine = req.instruction
+        ? `Here's a draft along the lines of: ${req.instruction}.`
+        : "Happy to help — here are my thoughts.";
+      const kbLine = kb.instructions
+        ? `\n\n[Demo mode: your standing instructions are being applied — "${kb.instructions.slice(0, 90)}"]`
+        : "";
+      body = `${greeting}\n\n${ctx} ${instructionLine}\n\nLet me know if this works on your end and I'll take it from there.\n\nBest,\nDemo Draft${kbLine}`;
+    }
+
+    const words = body.split(/(?<=\s)/);
+    let i = 0;
+    const tick = () => {
+      if (this.cancelFlags.get(id)) return;
+      if (i >= words.length) {
+        handlers.onDone();
+        return;
+      }
+      handlers.onChunk(words[i]);
+      i++;
+      setTimeout(tick, 18);
+    };
+    setTimeout(tick, 250);
+    return () => this.cancelFlags.set(id, true);
+  }
+
+  async aiSuggestReplies(threadId: ThreadId): Promise<string[]> {
+    const msgs = this.messages.get(threadId) ?? [];
+    const last = msgs[msgs.length - 1];
+    const name = last ? last.fromName.split(" ")[0] : "there";
+    return [
+      `Thanks ${name} — confirming receipt. I'll review and come back to you by tomorrow.`,
+      `Appreciate the nudge. Yes on my end — let's lock it in.`,
+      `Thanks for this. A few questions before I can confirm — do you have 15 minutes this week?`,
+    ];
+  }
+
+  async getStreaks() {
+    return this.state.streaks;
+  }
+
+  async recordZero(splitId: string): Promise<ZeroEvent | null> {
+    const today = new Date().toISOString().slice(0, 10);
+    const s = this.state.streaks;
+    if (s.lastZeroDay !== today) {
+      const yesterday = new Date(Date.now() - 24 * 3600_000)
+        .toISOString()
+        .slice(0, 10);
+      s.daily = s.lastZeroDay === yesterday ? s.daily + 1 : 1;
+      s.weekly = Math.floor(s.daily / 7);
+      s.lastZeroDay = today;
+      this.persist();
+    }
+    const img =
+      BUNDLED_CELEBRATIONS[
+        Math.floor(Math.random() * BUNDLED_CELEBRATIONS.length)
+      ];
+    return { splitId, daily: s.daily, weekly: s.weekly, imagePath: img };
+  }
+
+  async listCelebrationImages() {
+    return BUNDLED_CELEBRATIONS;
+  }
+
+  onMailUpdated(cb: () => void): () => void {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
+  }
+}
+
+/** First split (in settings order) whose rules match; empty-rule splits are
+ *  the catch-all and only claim threads nothing else matched. */
+export function assignSplit(t: Thread, splits: Settings["splits"]): string {
+  let catchAll: string | null = null;
+  for (const s of splits) {
+    if (s.rules.length === 0) {
+      catchAll = catchAll ?? s.id;
+      continue;
+    }
+    const results = s.rules.map((r) => {
+      const needle = r.contains.toLowerCase();
+      if (!needle) return false;
+      switch (r.field) {
+        case "label":
+          return t.labels.some((l) => l.toLowerCase().includes(needle));
+        case "subject":
+          return t.subject.toLowerCase().includes(needle);
+        case "from":
+        case "to":
+          return t.participants.some((p) => p.toLowerCase().includes(needle));
+      }
+    });
+    const matched = s.op === "and" ? results.every(Boolean) : results.some(Boolean);
+    if (matched) return s.id;
+  }
+  return catchAll ?? "other";
+}
