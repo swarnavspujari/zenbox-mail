@@ -48,6 +48,9 @@ fn valid_id(id: &str) -> Result<(), String> {
 
 #[tauri::command]
 fn get_account(state: State<'_, AppState>) -> AccountInfo {
+    // boot breadcrumb: proves the webview⇄core IPC round-trip in dev logs
+    #[cfg(debug_assertions)]
+    eprintln!("[ipc] get_account");
     store::get_account(&state.db.lock().unwrap())
 }
 
