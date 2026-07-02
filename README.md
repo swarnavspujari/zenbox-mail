@@ -20,7 +20,15 @@ A **keyboard-first, AI-native desktop email client** in the spirit of Superhuman
 - **Private by design** — OAuth tokens and AI keys live in the Windows Credential Manager (OS keychain). All secret-bearing calls happen in the Rust core, never the webview. No telemetry. No servers.
 - **Dark theme done right** — layered surfaces, no pure black/white, deepened accents, WCAG AA contrast, visible focus rings.
 
-## Requirements
+## Install (beta testers)
+
+Grab the latest Windows installer from the
+[**Releases page**](https://github.com/swarnavspujari/zenbox-mail/releases/latest)
+(`ZenBox Mail_…_x64-setup.exe`). Windows will warn that the beta isn't
+code-signed yet — click **More info → Run anyway**. The app updates itself
+automatically from then on. Details in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
+
+## Requirements (building from source)
 
 - Windows 11 (10 should work; untested)
 - [Node.js](https://nodejs.org) 20+ and npm

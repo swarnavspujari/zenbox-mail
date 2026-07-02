@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { backend, isTauri } from "@/lib/ipc";
 import { commandBindings } from "@/lib/commands";
 import { installKeyboard } from "@/lib/keyboard";
+import { startUpdateChecks, useUpdater } from "@/lib/updater";
 import { useMail } from "@/stores/mail";
 import { useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
@@ -28,6 +29,7 @@ export default function App() {
   const askAiOpen = useUi((s) => s.askAiOpen);
   const toast = useUi((s) => s.toast);
   const openThreadId = useMail((s) => s.openThreadId);
+  const updateReady = useUpdater((s) => s.ready);
   const loaded = useSettings((s) => s.loaded);
   const accounts = useSettings((s) => s.accounts);
   const theme = useSettings((s) => s.settings.theme);
@@ -41,6 +43,7 @@ export default function App() {
       .getState()
       .load()
       .then(() => useMail.getState().refresh());
+    startUpdateChecks();
     const unsub = backend.onMailUpdated(() => void useMail.getState().refresh());
     return unsub;
   }, []);
@@ -95,6 +98,15 @@ export default function App() {
           </select>
         ) : (
           <span className="text-[12px] text-ink-3">{accounts.active}</span>
+        )}
+        {updateReady && (
+          <button
+            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent hover:opacity-90"
+            onClick={() => void useUpdater.getState().restart()}
+            title={`ZenBox ${updateReady} downloaded — restart to apply`}
+          >
+            Update ready — Restart
+          </button>
         )}
         <button
           className="rounded px-2 py-1 text-[12px] text-ink-2 hover:bg-hover"

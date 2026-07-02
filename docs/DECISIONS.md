@@ -57,5 +57,10 @@ Running log of every non-default choice. Newest last.
 40. **Light theme** is a token-set swap on `html[data-theme]` — tuned, not inverted (deeper accents, `--on-accent` flips to white). Dark stays default per the original spec.
 41. Outlook's Graph adapter moves to **v0.4** — v0.3 spent its budget on triage parity, which benefits every account type.
 
+## v0.4 — Distribution: auto-update, release CI, signing path (2026-07-01)
+42. **Updates ship via GitHub Releases + `tauri-plugin-updater`** — no server, matching local-first. `latest.json` at `releases/latest/download/` is the feed; the app checks at boot + every 4h, downloads in the background, and offers "Update ready — Restart". Updater artifacts are minisign-signed; the private key lives in `C:\Users\swarn\.zenbox-mail-keys\` and the `TAURI_SIGNING_PRIVATE_KEY` repo secret (losing it orphans every install — it must be backed up).
+43. **Release CI = tag-triggered `tauri-action`** on `windows-latest`; the existing `build.yml` stays as the PR/push gate. Installers are **unsigned for now**: Authenticode via Azure Trusted Signing ($9.99/mo) is the documented path (docs/DISTRIBUTION.md) and needs an account only the user can create; CI wiring is written down, not faked.
+44. **NSIS `installMode: passive`** for updates — the updater runs the new installer with a progress bar and no wizard clicks, closest to "it just updated itself".
+
 ## Model defaults (editable in Settings)
 - **NIM (default): `deepseek-ai/deepseek-v4-pro`** @ `https://integrate.api.nvidia.com/v1` (alt: `deepseek-v4-flash`) · Claude: `claude-sonnet-5` · OpenAI: `gpt-5.2`
