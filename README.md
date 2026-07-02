@@ -2,7 +2,7 @@
 
 A **keyboard-first, AI-native desktop email client** in the spirit of Superhuman — built with Tauri v2 (Rust core + system webview), React, and your own AI keys. Local-first: your mail cache, your settings, and your API keys never leave your machine.
 
-> **Status:** v0.1.0 — Windows 11. The same codebase targets macOS next, then iOS/Android via Tauri v2 mobile.
+> **Status:** v0.7 beta — Windows 11, auto-updating installer on the [Releases page](https://github.com/swarnavspujari/zenbox-mail/releases/latest). The same codebase targets macOS next, then iOS/Android via Tauri v2 mobile.
 
 *(screenshots/GIFs coming — run it and hit `Ctrl+K`)*
 
@@ -10,8 +10,9 @@ A **keyboard-first, AI-native desktop email client** in the spirit of Superhuman
 
 - **Fly through email** — the keymap replicates **Superhuman v7 (Windows/Linux)**: `E` done, `Shift+E` not done, `R`/`A` reply/reply-all, `S` star, `#` trash, `!` spam, `M` mute, `H` remind, `U` read/unread, `Z` **undo anything**, `Ctrl+U` unsubscribe, `J/K` navigate, `G`-chords (incl. `G S` starred), `Tab` next split. A `Ctrl+K` command palette lists everything with its shortcut.
 - **Undo Send & Send Later** — every send has a 10-second `Z` window; `Ctrl+Shift+L` schedules for later. The outbox lives in SQLite, so scheduled mail survives restarts — no server involved.
-- **Multiple accounts, instant switching** — connect several Gmail accounts (one shared OAuth client) and jump between inboxes with `Ctrl+1…9`; slots are reassignable by reordering in Settings. Per-account signatures. Outlook (Microsoft Graph) is scaffolded for v0.3.
-- **Split Inbox** — Important / Other / Calendar out of the box, plus custom splits from `from:` / `to:` / `subject:` / label rules (AND/OR). Counts show **total** conversations, so a split reads like a to-do list.
+- **Multiple accounts, instant switching** — connect several Gmail accounts and jump between inboxes with `Alt+1…9`; slots are reassignable by reordering in Settings. Per-account rich signatures (paste your Gmail one, images included). Outlook (Microsoft Graph) is scaffolded for a later release.
+- **Real mail, rendered properly** — HTML email on a clean white card (sanitized, script-free), quoted trails tucked behind `•••`, collapsed older messages, attachments that open/save, and a toggleable Google Calendar day panel.
+- **Split Inbox** — Important / Other out of the box (calendar lives in a toggleable side panel), plus custom splits from `from:` / `to:` / `subject:` / label rules (AND/OR). Counts show **total** conversations, so a split reads like a to-do list.
 - **Inbox Zero, celebrated** — hit zero in a split and get a full-screen celebration image with your daily/weekly streak. **Get Me To Zero** bulk-archives old mail (preserving unread/starred if you want) so the first cleanup takes seconds.
 - **Write with AI (`Ctrl+J`)** — drafts stream in from **Claude, OpenAI, or NVIDIA NIM** using *your* key. The model sees the full thread, parsed attachments (PDF, text, best-effort .docx, images to multimodal models), and your personal Knowledge Base — so drafts sound like you and are grounded in real context.
 - **Instant Reply** — up to 3 suggested replies per thread; `Tab` previews, `R` inserts. Nothing ever sends without your explicit review.
@@ -56,7 +57,9 @@ Browser-only UI dev (mock backend, instant reload): `npm run dev` → http://loc
 
 ## Connect Gmail
 
-You need a **Google OAuth client (Desktop app)** — a 5-minute, one-time setup. Follow [docs/SETUP.md](docs/SETUP.md) step by step, then paste the Client ID + Secret into **Settings → Account** inside the app and hit *Connect Gmail*. Your browser opens for consent; tokens go straight into the OS keychain.
+**Installer builds:** just click **Connect Gmail** in the welcome flow — a shared beta OAuth client is built in. Google shows an "unverified app" notice once; click *Advanced → Go to zenbox-mail* ([why](docs/GOOGLE_OAUTH.md)).
+
+**Building from source:** bring your own Google OAuth client (Desktop app type, ~5 minutes) — follow [docs/SETUP.md](docs/SETUP.md), then paste the Client ID + Secret into **Settings → Account**. Tokens go straight into the OS keychain either way.
 
 ## Add AI keys
 
@@ -83,7 +86,7 @@ Details and model configuration: [docs/AI_PROVIDERS.md](docs/AI_PROVIDERS.md). U
 | `Enter` | Open (list) / Reply-all (thread) | `S` | Star |
 | `J` / `↓`, `K` / `↑` | Next / previous conversation | `#` | Trash |
 | `U` | Mark read/unread | `Ctrl+J` | Write with AI (in compose) |
-| `Ctrl+1…9` | Switch account | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Send / Send & Mark Done |
+| `Alt+1…9` | Switch account | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Send / Send & Mark Done |
 | `Esc` | Back / close | | |
 
 Every shortcut is remappable in **Settings → Shortcuts**. Full list + smoke test: [docs/SHORTCUTS.md](docs/SHORTCUTS.md).
@@ -101,9 +104,9 @@ Every shortcut is remappable in **Settings → Shortcuts**. Full list + smoke te
 
 ## Roadmap
 
-- **P0 (done, this release):** Gmail account + sync · keyboard-first UX + palette · split inbox with custom splits · Inbox Zero celebrations + streaks + Get Me To Zero · compose with streaming BYOK AI (Claude/OpenAI/NIM) · Instant Reply · context-aware drafting (thread + attachments + Knowledge Base) · personalization panel · dark theme · OS-keychain secrets
-- **P1 (next):** auto labels · auto archive · richer snooze scheduler · Ask AI across the whole inbox · undo send · send later · unsubscribe (`Ctrl+U`) · multiple accounts · light theme · macOS build
-- **P2 (documented, not built):** iOS/Android via Tauri v2 mobile · calendar day/week views · team collaboration · CRM integrations · read receipts — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#p2-later)
+- **Shipped through v0.7:** Gmail sync (incremental via history API) · full Superhuman-style keymap + palette · split inbox · Inbox Zero celebrations + Get Me To Zero · streaming BYOK AI (Claude/OpenAI/NIM) · Instant Reply · Ask AI · undo anything incl. send · send later · multi-account · HTML mail rendering · attachments · local drafts · onboarding · auto-update · notifications · calendar side panel · light theme
+- **Next:** Outlook (Microsoft Graph) adapter · `X` bulk selection · search operators (`from:`, `in:`) · macOS build · Ask AI across the whole inbox
+- **Later (documented, not built):** iOS/Android via Tauri v2 mobile · calendar week view + event creation · team collaboration · CRM integrations — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#p2-later)
 
 ## License
 

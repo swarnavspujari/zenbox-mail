@@ -86,5 +86,7 @@ Running log of every non-default choice. Newest last.
 61. **The builtin Calendar split is gone** (bug #4: "showable and hidable on the side, not a tab"). Saved settings drop it on read (custom splits untouched); its threads fall through the normal split rules. The day panel toggles via the tab-bar button, a palette command ("Toggle Calendar Panel"), and persists in `settings.calendarOpen`.
 62. **Calendar panel is read-only day view** (7am–8pm grid, event blocks, now-line, prev/next/today) fed by `list_events` — Google Calendar for connected accounts, fixtures in demo. Week view / event creation deferred until someone asks.
 
+63. **Stretch items (Outlook adapter, X bulk selection, search operators) are deferred to v0.8** — the beta push's budget went to verification depth instead (three full fresh-context checklist runs). Evidence for the call: the Graph adapter alone is folders↔archive semantics + conversation threading + MIME (DECISIONS #25 already ruled it "deserves its own release"), and bulk selection touches the keyboard engine, list UI, and every triage command — neither is a responsible end-of-cycle add. Search operators are the natural first v0.8 item.
+
 ## Model defaults (editable in Settings)
 - **NIM (default): `deepseek-ai/deepseek-v4-pro`** @ `https://integrate.api.nvidia.com/v1` (alt: `deepseek-v4-flash`) · Claude: `claude-sonnet-5` · OpenAI: `gpt-5.2`

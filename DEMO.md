@@ -40,14 +40,14 @@ npm run app:dev
 
 ## 2. Splits (45s)
 
-1. `Tab` / `Shift+Tab` cycles **Important / Other / Calendar**; badges show **totals**, not unread.
+1. `Tab` / `Shift+Tab` cycles the splits (**Important / Other** out of the box); badges show **totals**, not unread. The **Calendar** button (top right) toggles the day panel.
 2. Settings (`Ctrl+,`) → Splits → create `Newsletters` with `from` contains `substack` **OR** `from` contains `strictlyvc` → back (`Esc`): the new tab holds both newsletters.
 
 ✅ *DoD: default splits + custom split + total counts.*
 
 ## 3. Inbox Zero (45s)
 
-1. `Tab` to **Calendar** → `E` both threads (or palette → *Get Me To Zero*).
+1. `Tab` to a split → `E` everything in it (or palette → *Get Me To Zero*; one `Z` restores the whole sweep).
 2. Full-screen celebration image + day streak appears. Any key dismisses.
 3. Palette → *Get Me To Zero* on another split → pick a preserve option → toast reports the count.
 
