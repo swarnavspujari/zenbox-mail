@@ -1,6 +1,6 @@
 [package]
 name = "zenbox-mail"
-version = "0.2.0"
+version = "0.3.0"
 description = "ZenBox Mail — keyboard-first, AI-native email client"
 authors = ["Swarnav S Pujari"]
 license = "MIT"
