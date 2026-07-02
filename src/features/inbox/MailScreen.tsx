@@ -122,19 +122,28 @@ export function MailScreen() {
   const inbox = useMail((s) => s.inbox);
   const done = useMail((s) => s.done);
   const reminders = useMail((s) => s.reminders);
+  const starred = useMail((s) => s.starred);
   const activeSplitId = useMail((s) => s.activeSplitId);
   const splits = useSettings((s) => s.settings.splits);
   const loaded = useMail((s) => s.loaded);
 
   const threads = useMemo(() => {
     if (listView === "inbox") return splitThreads(inbox, activeSplitId);
-    return listView === "done" ? done : reminders;
+    if (listView === "done") return done;
+    if (listView === "starred") return starred;
+    return reminders;
     // splits is a dependency because splitThreads reads it via settings
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listView, inbox, done, reminders, activeSplitId, splits]);
+  }, [listView, inbox, done, reminders, starred, activeSplitId, splits]);
 
   const title =
-    listView === "inbox" ? null : listView === "done" ? "Done" : "Reminders";
+    listView === "inbox"
+      ? null
+      : listView === "done"
+        ? "Done"
+        : listView === "starred"
+          ? "Starred"
+          : "Reminders";
 
   return (
     <div className="flex h-full flex-col">

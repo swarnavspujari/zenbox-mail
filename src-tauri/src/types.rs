@@ -85,6 +85,20 @@ pub struct Settings {
     /// account email -> signature text, appended to outgoing mail
     #[serde(default)]
     pub signatures: std::collections::HashMap<String, String>,
+    /// "dark" (default) or "light"
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "dark".into()
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsubResult {
+    pub kind: String, // opened | mailto | none
+    pub target: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

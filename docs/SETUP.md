@@ -47,7 +47,7 @@ Notes:
 
 Settings → **Account** → *Add a Gmail account*. The same OAuth client serves every Gmail account — once it's stored, leave the fields blank and hit **Connect**; a browser consent opens for the new address (add it as a **Test user** on the consent screen first). Switch accounts with **Ctrl+1…9**; slots follow the order in Settings (reorder to reassign).
 
-### Outlook (coming in v0.3)
+### Outlook (coming in v0.4)
 
 Microsoft Graph support is scaffolded. When it lands you'll need a (free) Azure **app registration** instead of a Google OAuth client:
 

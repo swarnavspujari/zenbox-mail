@@ -12,6 +12,8 @@ import { CommandPalette } from "@/features/palette/CommandPalette";
 import { SnoozePicker } from "@/features/pickers/SnoozePicker";
 import { MovePicker } from "@/features/pickers/MovePicker";
 import { ZeroSweep } from "@/features/pickers/ZeroSweep";
+import { SendLaterPicker } from "@/features/pickers/SendLaterPicker";
+import { SnippetPicker } from "@/features/pickers/SnippetPicker";
 import { Celebration } from "@/features/zero/Celebration";
 import { SearchScreen } from "@/features/search/SearchScreen";
 import { SettingsScreen } from "@/features/settings/SettingsScreen";
@@ -28,6 +30,11 @@ export default function App() {
   const openThreadId = useMail((s) => s.openThreadId);
   const loaded = useSettings((s) => s.loaded);
   const accounts = useSettings((s) => s.accounts);
+  const theme = useSettings((s) => s.settings.theme);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   useEffect(() => {
     void useSettings
@@ -109,6 +116,8 @@ export default function App() {
         {picker === "snooze" && <SnoozePicker />}
         {picker === "move" && <MovePicker />}
         {picker === "zeroSweep" && <ZeroSweep />}
+        {picker === "sendLater" && <SendLaterPicker />}
+        {picker === "snippet" && <SnippetPicker />}
         {celebration && <Celebration />}
 
         {toast && (

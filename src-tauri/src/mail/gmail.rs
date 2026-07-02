@@ -234,6 +234,12 @@ impl GmailSession {
             .map(|_| ())
     }
 
+    pub async fn untrash_thread(&mut self, http: &reqwest::Client, id: &str) -> Result<(), String> {
+        self.post_json(http, &format!("{BASE}/threads/{id}/untrash"), json!({}))
+            .await
+            .map(|_| ())
+    }
+
     pub async fn send(
         &mut self,
         http: &reqwest::Client,
@@ -275,8 +281,26 @@ impl GmailSession {
 pub struct ParsedMessage {
     pub message: Message,
     pub rfc_message_id: Option<String>,
+    pub list_unsubscribe: Option<String>,
     pub attachments: Vec<(Attachment, Option<String>)>, // (meta, gmail attachment id)
     pub label_ids: Vec<String>,
+}
+
+/// Pick the actionable target out of a List-Unsubscribe header:
+/// prefers an https URL, falls back to a mailto address.
+pub fn parse_unsubscribe_target(header: &str) -> Option<(String, String)> {
+    let mut mailto = None;
+    for token in header.split(',') {
+        let t = token.trim().trim_start_matches('<').trim_end_matches('>');
+        if t.starts_with("https://") {
+            return Some(("opened".into(), t.to_string()));
+        }
+        if let Some(addr) = t.strip_prefix("mailto:") {
+            let addr = addr.split('?').next().unwrap_or(addr);
+            mailto.get_or_insert(addr.to_string());
+        }
+    }
+    mailto.map(|m| ("mailto".into(), m))
 }
 
 fn header<'a>(payload: &'a Value, name: &str) -> Option<&'a str> {
@@ -411,6 +435,7 @@ pub fn parse_gmail_message(msg: &Value, thread_id: &str) -> ParsedMessage {
     let rfc_message_id = header(payload, "Message-ID")
         .or_else(|| header(payload, "Message-Id"))
         .map(str::to_string);
+    let list_unsubscribe = header(payload, "List-Unsubscribe").map(str::to_string);
     let date = msg["internalDate"]
         .as_str()
         .and_then(|s| s.parse::<i64>().ok())
@@ -443,6 +468,7 @@ pub fn parse_gmail_message(msg: &Value, thread_id: &str) -> ParsedMessage {
         .collect();
 
     ParsedMessage {
+        list_unsubscribe,
         message: Message {
             id: id.clone(),
             thread_id: thread_id.to_string(),

@@ -220,7 +220,7 @@ async fn sync_now(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
 
 #[tauri::command]
 fn list_threads(state: State<'_, AppState>, view: String) -> Result<Vec<Thread>, String> {
-    if !matches!(view.as_str(), "inbox" | "done" | "reminders") {
+    if !matches!(view.as_str(), "inbox" | "done" | "reminders" | "starred") {
         return Err("invalid view".into());
     }
     let conn = state.db.lock().unwrap();
@@ -295,9 +295,18 @@ async fn move_to_inbox(state: State<'_, AppState>, thread_id: String) -> Result<
     store::set_in_inbox(&state.db.lock().unwrap(), &thread_id, true)
 }
 
+/// Trash or spam a thread. Soft-hide locally (so Z can restore instantly);
+/// server-side it goes to Gmail's Trash / Spam.
 #[tauri::command]
-async fn trash_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+async fn hide_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+    reason: String,
+) -> Result<(), String> {
     valid_id(&thread_id)?;
+    if !matches!(reason.as_str(), "trash" | "spam") {
+        return Err("invalid reason".into());
+    }
     if !is_mock_id(&thread_id) {
         let account = {
             let conn = state.db.lock().unwrap();
@@ -306,11 +315,100 @@ async fn trash_thread(state: State<'_, AppState>, thread_id: String) -> Result<(
         if let Some(account) = account {
             let mut sessions = state.gmail.lock().await;
             if let Some(s) = sessions.get_mut(&account) {
-                s.trash_thread(&state.http, &thread_id).await?;
+                if reason == "trash" {
+                    s.trash_thread(&state.http, &thread_id).await?;
+                } else {
+                    s.modify_thread(&state.http, &thread_id, &["SPAM"], &["INBOX"]).await?;
+                }
             }
         }
     }
-    store::delete_thread(&state.db.lock().unwrap(), &thread_id)
+    store::set_hidden(&state.db.lock().unwrap(), &thread_id, Some(&reason))
+}
+
+/// Undo for hide_thread: untrash/unspam remotely, resurface locally.
+#[tauri::command]
+async fn restore_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+    valid_id(&thread_id)?;
+    let reason = store::hidden_reason(&state.db.lock().unwrap(), &thread_id);
+    if !is_mock_id(&thread_id) {
+        let account = {
+            let conn = state.db.lock().unwrap();
+            store::account_of_thread(&conn, &thread_id)
+        };
+        if let Some(account) = account {
+            let mut sessions = state.gmail.lock().await;
+            if let Some(s) = sessions.get_mut(&account) {
+                match reason.as_deref() {
+                    Some("trash") => {
+                        s.untrash_thread(&state.http, &thread_id).await?;
+                        s.modify_thread(&state.http, &thread_id, &["INBOX"], &[]).await?;
+                    }
+                    Some("spam") => {
+                        s.modify_thread(&state.http, &thread_id, &["INBOX"], &["SPAM"]).await?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    store::set_hidden(&state.db.lock().unwrap(), &thread_id, None)
+}
+
+/// Mute: archive now and keep auto-archiving new replies (via the sync pass).
+#[tauri::command]
+async fn mute_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+    valid_id(&thread_id)?;
+    let already_muted = {
+        let conn = state.db.lock().unwrap();
+        store::get_thread(&conn, &thread_id)
+            .map(|t| t.labels.iter().any(|l| l == "Muted"))
+            .unwrap_or(false)
+    };
+    if !already_muted {
+        move_label(state.clone(), thread_id.clone(), "Muted".into()).await?;
+    }
+    remote_modify(&state, &thread_id, &[], &["INBOX"]).await?;
+    store::set_in_inbox(&state.db.lock().unwrap(), &thread_id, false)
+}
+
+#[tauri::command]
+async fn unmute_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+    valid_id(&thread_id)?;
+    let muted = {
+        let conn = state.db.lock().unwrap();
+        store::get_thread(&conn, &thread_id)
+            .map(|t| t.labels.iter().any(|l| l == "Muted"))
+            .unwrap_or(false)
+    };
+    if muted {
+        move_label(state.clone(), thread_id.clone(), "Muted".into()).await?;
+    }
+    remote_modify(&state, &thread_id, &["INBOX"], &[]).await?;
+    store::set_in_inbox(&state.db.lock().unwrap(), &thread_id, true)
+}
+
+#[tauri::command]
+fn unsubscribe_thread(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<UnsubResult, String> {
+    valid_id(&thread_id)?;
+    let header = store::unsubscribe_header(&state.db.lock().unwrap(), &thread_id);
+    let Some(header) = header else {
+        return Ok(UnsubResult { kind: "none".into(), target: None });
+    };
+    match mail::gmail::parse_unsubscribe_target(&header) {
+        Some((kind, target)) if kind == "opened" => {
+            let _ = app; // opener plugin is app-scoped
+            tauri_plugin_opener::open_url(&target, None::<String>)
+                .map_err(|_| "could not open the unsubscribe page".to_string())?;
+            Ok(UnsubResult { kind, target: Some(target) })
+        }
+        Some((kind, target)) => Ok(UnsubResult { kind, target: Some(target) }),
+        None => Ok(UnsubResult { kind: "none".into(), target: None }),
+    }
 }
 
 #[tauri::command]
@@ -458,12 +556,7 @@ fn assign_split(t: &Thread, splits: &[Split]) -> String {
 
 // ---------------------------------------------------------------- send
 
-#[tauri::command]
-async fn send_mail(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    mail: OutgoingMail,
-) -> Result<(), String> {
+fn validate_mail(mail: &OutgoingMail) -> Result<(), String> {
     if mail.to.is_empty() {
         return Err("add at least one recipient".into());
     }
@@ -472,12 +565,24 @@ async fn send_mail(
             return Err(format!("\"{addr}\" is not a valid address"));
         }
     }
-    let account = {
+    Ok(())
+}
+
+/// Actually deliver a message for a given account: Gmail send for connected
+/// accounts, local append in demo mode. Used by the outbox processor.
+async fn deliver_mail(app: &AppHandle, account_email: &str, mail: &OutgoingMail) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let provider = {
         let conn = state.db.lock().unwrap();
-        store::active_account(&conn)
+        store::get_accounts(&conn)
+            .accounts
+            .iter()
+            .find(|a| a.email == account_email)
+            .map(|a| a.provider.clone())
+            .unwrap_or_else(|| "mock".into())
     };
 
-    if account.provider == "gmail" && !mail.thread_id.as_deref().map(is_mock_id).unwrap_or(false) {
+    if provider == "gmail" && !mail.thread_id.as_deref().map(is_mock_id).unwrap_or(false) {
         let in_reply_to: Option<String> = mail.thread_id.as_ref().and_then(|tid| {
             let conn = state.db.lock().unwrap();
             conn.query_row(
@@ -488,14 +593,13 @@ async fn send_mail(
             .ok()
             .flatten()
         });
-        let raw = mail::gmail::build_rfc822(&account.email, &mail, in_reply_to.as_deref());
+        let raw = mail::gmail::build_rfc822(account_email, mail, in_reply_to.as_deref());
         let mut sessions = state.gmail.lock().await;
         let session = sessions
-            .get_mut(&account.email)
-            .ok_or("Gmail session unavailable for the active account")?;
+            .get_mut(account_email)
+            .ok_or("Gmail session unavailable for this account")?;
         session.send(&state.http, &raw, mail.thread_id.as_deref()).await?;
         drop(sessions);
-        sync_in_background(app);
         return Ok(());
     }
 
@@ -510,7 +614,7 @@ async fn send_mail(
     let msg = Message {
         id: mid,
         thread_id: tid.clone(),
-        from: account.email.clone(),
+        from: account_email.to_string(),
         from_name: "You".into(),
         to: mail.to.clone(),
         cc: mail.cc.clone(),
@@ -534,7 +638,7 @@ async fn send_mail(
             id: tid.clone(),
             subject: if subject.is_empty() { "(no subject)".into() } else { subject },
             snippet: msg.snippet.clone(),
-            participants: vec![format!("You <{}>", account.email)],
+            participants: vec![format!("You <{account_email}>")],
             message_count: 1,
             last_date: now,
             unread: false,
@@ -544,10 +648,28 @@ async fn send_mail(
             snoozed_until: None,
         },
     };
-    store::upsert_thread(&conn, &account.email, &thread, &[(msg, None, vec![])])?;
-    drop(conn);
-    let _ = app.emit("mail:updated", ());
+    store::upsert_thread(&conn, account_email, &thread, &[(msg, None, None, vec![])])?;
     Ok(())
+}
+
+/// Queue a message. delay_ms ≈ 10s gives the Undo Send window; larger values
+/// are Send Later. The outbox survives app restarts.
+#[tauri::command]
+fn queue_mail(state: State<'_, AppState>, mail: OutgoingMail, delay_ms: i64) -> Result<i64, String> {
+    validate_mail(&mail)?;
+    if !(0..=90 * 24 * 3_600_000).contains(&delay_ms) {
+        return Err("invalid send delay".into());
+    }
+    let conn = state.db.lock().unwrap();
+    let account = store::get_accounts(&conn).active;
+    store::outbox_add(&conn, &account, &mail, now_ms() + delay_ms)
+}
+
+/// Undo Send: pull a message back before the outbox flushes it.
+#[tauri::command]
+fn cancel_outbox(state: State<'_, AppState>, outbox_id: i64) -> Result<OutgoingMail, String> {
+    store::outbox_cancel(&state.db.lock().unwrap(), outbox_id)
+        .ok_or("already sent".to_string())
 }
 
 // ---------------------------------------------------------------- settings
@@ -863,6 +985,38 @@ pub fn run() {
                 });
             }
 
+            // outbox processor: flushes due sends every 3s (10s undo window,
+            // Send Later, and retry with a 5-attempt cap)
+            let outbox_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    let state = outbox_handle.state::<AppState>();
+                    let due = {
+                        let conn = state.db.lock().unwrap();
+                        store::outbox_due(&conn, now_ms())
+                    };
+                    let mut sent_any = false;
+                    for (id, account, mail) in due {
+                        match deliver_mail(&outbox_handle, &account, &mail).await {
+                            Ok(()) => {
+                                let conn = state.db.lock().unwrap();
+                                store::outbox_delete(&conn, id);
+                                sent_any = true;
+                            }
+                            Err(e) => {
+                                eprintln!("[outbox] send failed (will retry): {e}");
+                                let conn = state.db.lock().unwrap();
+                                store::outbox_bump_attempts(&conn, id);
+                            }
+                        }
+                    }
+                    if sent_any {
+                        let _ = outbox_handle.emit("mail:updated", ());
+                    }
+                }
+            });
+
             // background loop: snooze wake-ups every 30s, Gmail sync every 60s
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -925,14 +1079,19 @@ pub fn run() {
             list_labels,
             archive_thread,
             move_to_inbox,
-            trash_thread,
+            hide_thread,
+            restore_thread,
+            mute_thread,
+            unmute_thread,
+            unsubscribe_thread,
             toggle_star,
             snooze_thread,
             mark_unread,
             mark_read,
             move_label,
             bulk_archive,
-            send_mail,
+            queue_mail,
+            cancel_outbox,
             get_settings,
             save_settings,
             get_knowledge_base,

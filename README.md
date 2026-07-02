@@ -8,7 +8,8 @@ A **keyboard-first, AI-native desktop email client** in the spirit of Superhuman
 
 ## Features
 
-- **Fly through email** — the keymap replicates **Superhuman v7 (Windows/Linux)**: `E` done, `Shift+E` not done, `R`/`A` reply/reply-all, `S` star, `#` trash, `H` remind, `U` read/unread, `J/K` navigate, `G`-chords, `Tab` next split. A `Ctrl+K` command palette lists everything with its shortcut.
+- **Fly through email** — the keymap replicates **Superhuman v7 (Windows/Linux)**: `E` done, `Shift+E` not done, `R`/`A` reply/reply-all, `S` star, `#` trash, `!` spam, `M` mute, `H` remind, `U` read/unread, `Z` **undo anything**, `Ctrl+U` unsubscribe, `J/K` navigate, `G`-chords (incl. `G S` starred), `Tab` next split. A `Ctrl+K` command palette lists everything with its shortcut.
+- **Undo Send & Send Later** — every send has a 10-second `Z` window; `Ctrl+Shift+L` schedules for later. The outbox lives in SQLite, so scheduled mail survives restarts — no server involved.
 - **Multiple accounts, instant switching** — connect several Gmail accounts (one shared OAuth client) and jump between inboxes with `Ctrl+1…9`; slots are reassignable by reordering in Settings. Per-account signatures. Outlook (Microsoft Graph) is scaffolded for v0.3.
 - **Split Inbox** — Important / Other / Calendar out of the box, plus custom splits from `from:` / `to:` / `subject:` / label rules (AND/OR). Counts show **total** conversations, so a split reads like a to-do list.
 - **Inbox Zero, celebrated** — hit zero in a split and get a full-screen celebration image with your daily/weekly streak. **Get Me To Zero** bulk-archives old mail (preserving unread/starred if you want) so the first cleanup takes seconds.

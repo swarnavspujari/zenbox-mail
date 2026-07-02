@@ -1,3 +1,4 @@
+import { pushTriageUndo } from "@/lib/commands";
 import { useMail } from "@/stores/mail";
 import { actionTargetThreadId, useUi } from "@/stores/ui";
 import { PickerShell, type PickerItem } from "./PickerShell";
@@ -16,6 +17,7 @@ export function SnoozePicker() {
     if (!id) return;
     if (useMail.getState().openThreadId === id) useMail.getState().closeThread();
     await useMail.getState().snooze(id, until);
+    pushTriageUndo("Snooze", () => useMail.getState().moveToInbox(id));
     useUi.getState().showToast(`Reminder set — ${label}`);
     await useUi.getState().checkInboxZero();
   };

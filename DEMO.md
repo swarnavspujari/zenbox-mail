@@ -2,14 +2,29 @@
 
 Run each step in order on Windows 11. Each maps to a Definition-of-Done item.
 
-## 0. Build & launch (≈3 min first time)
+## 0. Install or build (≈3 min first time)
 
+**Installer:** run `ZenBox Mail_x64-setup.exe` from `src-tauri/target/release/bundle/nsis/` (or a release download) and launch ZenBox Mail from the Start Menu.
+
+**From source:**
 ```powershell
 npm install
 npm run app:dev
 ```
 
-✅ *DoD: builds and launches on Windows 11.* The app opens dark, in **demo mode** with a seeded inbox — steps 1–8 need no credentials.
+✅ *DoD: builds and launches on Windows 11.* The app opens dark, in **demo mode** with two seeded accounts — steps 1–8 need no credentials.
+
+## 0.5 The v0.3 triage loop (90s, no credentials)
+
+1. `Ctrl+2` — switch to the angel@ demo account; `Ctrl+1` back.
+2. `S` star a thread → `G` `S` — it's in Starred.
+3. `#` trash a thread → **`Z`** — it's back. `!` spam → `Z` again.
+4. `M` mutes a thread (archives + will auto-archive future replies).
+5. Select the StrictlyVC newsletter → `Ctrl+U` → unsubscribe page opens.
+6. `R` reply → type → `Ctrl+Enter` → toast "Sent — Z to undo" → press `Z` within 10s → the draft comes back. Send again and let it go.
+7. `C` → write → `Ctrl+Shift+L` → "In 2 minutes (demo)" → it delivers itself (even if you restart in between).
+8. `Ctrl+;` in compose inserts a Knowledge Base snippet.
+9. Palette → "Toggle Light / Dark Theme" — the whole app re-skins.
 
 ## 1. Keyboard flow (60s)
 

@@ -84,15 +84,26 @@ pub async fn full_sync(
         }
         changed = true;
     }
+
+    // Muted threads never sit in the inbox: any that resurfaced (new reply)
+    // are re-archived, mirroring Gmail's mute semantics locally.
+    let muted: Vec<String> = {
+        let conn = db.lock().unwrap();
+        store::muted_inbox_threads(&conn, account_id)
+    };
+    for id in muted {
+        let _ = session.modify_thread(http, &id, &[], &["INBOX"]).await;
+        let conn = db.lock().unwrap();
+        store::set_in_inbox(&conn, &id, false)?;
+        changed = true;
+    }
     Ok(changed)
 }
 
-type MsgTuple = (Message, Option<String>, Vec<(Attachment, Option<String>, Option<String>)>);
-
-pub fn thread_from_json(id: &str, v: &Value, in_inbox: bool) -> (Thread, Vec<MsgTuple>) {
+pub fn thread_from_json(id: &str, v: &Value, in_inbox: bool) -> (Thread, Vec<store::MsgRow>) {
     let empty = vec![];
     let raw_msgs = v["messages"].as_array().unwrap_or(&empty);
-    let mut msgs: Vec<MsgTuple> = vec![];
+    let mut msgs: Vec<store::MsgRow> = vec![];
     let mut participants: Vec<String> = vec![];
     let mut labels: HashSet<String> = HashSet::new();
     let mut unread = false;
@@ -122,7 +133,7 @@ pub fn thread_from_json(id: &str, v: &Value, in_inbox: bool) -> (Thread, Vec<Msg
             .into_iter()
             .map(|(a, remote)| (a, remote, None))
             .collect();
-        msgs.push((parsed.message, parsed.rfc_message_id, atts));
+        msgs.push((parsed.message, parsed.rfc_message_id, parsed.list_unsubscribe, atts));
     }
 
     let starred = labels.contains("STARRED");

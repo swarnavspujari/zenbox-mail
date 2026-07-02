@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { backend } from "@/lib/ipc";
 import { formatKeyExpr } from "@/lib/keyboard";
-import { shortcutHint } from "@/lib/commands";
+import { pushTriageUndo, shortcutHint } from "@/lib/commands";
+import { pushUndo } from "@/lib/undo";
 import { useMail } from "@/stores/mail";
 import { useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
+
+const UNDO_SEND_MS = 10_000;
 
 function splitAddresses(raw: string): string[] {
   return raw
@@ -95,7 +98,7 @@ function AiBar({
         <button
           onClick={go}
           disabled={running}
-          className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-[#0e1014] hover:bg-accent-strong disabled:opacity-50"
+          className="shrink-0 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-on-accent hover:bg-accent-strong disabled:opacity-50"
         >
           {running ? "Drafting…" : "Draft"}
         </button>
@@ -139,23 +142,44 @@ export function Compose() {
           .map((s) => s.trim())
           .filter(Boolean)
           .join("\n\n");
-        await backend.sendMail({
-          threadId: c.threadId,
-          to,
-          cc: splitAddresses(c.cc),
-          subject: c.subject || "(no subject)",
-          bodyText,
-          replyAll: c.mode === "replyAll",
-        });
+        // Queue with a 10s fuse instead of sending immediately — that fuse
+        // IS the Undo Send window (Z pulls the draft back).
+        const outboxId = await backend.queueMail(
+          {
+            threadId: c.threadId,
+            to,
+            cc: splitAddresses(c.cc),
+            subject: c.subject || "(no subject)",
+            bodyText,
+            replyAll: c.mode === "replyAll",
+          },
+          UNDO_SEND_MS
+        );
+        const saved = { ...c };
         useUi.getState().closeCompose();
+        pushUndo({
+          label: "Send",
+          expiresAt: Date.now() + UNDO_SEND_MS - 1_000,
+          run: async () => {
+            try {
+              await backend.cancelOutbox(outboxId);
+              useUi.getState().startCompose(saved);
+              useUi.getState().showToast("Send undone — draft restored");
+            } catch {
+              useUi.getState().showToast("Too late — already sent");
+            }
+          },
+        });
         if (markDone && c.threadId) {
           if (useMail.getState().openThreadId === c.threadId)
             useMail.getState().closeThread();
-          await useMail.getState().archive(c.threadId);
-          useUi.getState().showToast("Sent & marked done");
+          const tid = c.threadId;
+          await useMail.getState().archive(tid);
+          pushTriageUndo("Mark Done", () => useMail.getState().moveToInbox(tid));
+          useUi.getState().showToast("Sent & marked done — Z to undo");
           await useUi.getState().checkInboxZero();
         } else {
-          useUi.getState().showToast("Sent");
+          useUi.getState().showToast("Sent — Z to undo");
         }
         await useMail.getState().refresh();
       } catch (e) {
@@ -261,7 +285,7 @@ export function Compose() {
           <button
             onClick={() => window.dispatchEvent(new CustomEvent("zenbox:send"))}
             disabled={sending}
-            className="rounded-md bg-accent px-4 py-1.5 text-[13px] font-medium text-[#0e1014] hover:bg-accent-strong disabled:opacity-50"
+            className="rounded-md bg-accent px-4 py-1.5 text-[13px] font-medium text-on-accent hover:bg-accent-strong disabled:opacity-50"
           >
             {sending ? "Sending…" : "Send"}
           </button>

@@ -9,6 +9,7 @@ interface MailState {
   inbox: Thread[];
   done: Thread[];
   reminders: Thread[];
+  starred: Thread[];
 
   listView: MailView;
   activeSplitId: string;
@@ -29,7 +30,10 @@ interface MailState {
   closeThread: () => void;
 
   archive: (id: ThreadId) => Promise<void>;
-  trash: (id: ThreadId) => Promise<void>;
+  hide: (id: ThreadId, reason: "trash" | "spam") => Promise<void>;
+  restore: (id: ThreadId) => Promise<void>;
+  mute: (id: ThreadId) => Promise<void>;
+  unmute: (id: ThreadId) => Promise<void>;
   toggleStar: (id: ThreadId) => Promise<void>;
   snooze: (id: ThreadId, untilMs: number) => Promise<void>;
   markUnread: (id: ThreadId) => Promise<void>;
@@ -53,6 +57,7 @@ export function splitThreads(inbox: Thread[], splitId: string): Thread[] {
 export function visibleThreads(s: MailState): Thread[] {
   if (s.listView === "inbox") return splitThreads(s.inbox, s.activeSplitId);
   if (s.listView === "done") return s.done;
+  if (s.listView === "starred") return s.starred;
   return s.reminders;
 }
 
@@ -61,6 +66,7 @@ export const useMail = create<MailState>((set, get) => ({
   inbox: [],
   done: [],
   reminders: [],
+  starred: [],
   listView: "inbox",
   activeSplitId: "important",
   selectedIndex: 0,
@@ -69,12 +75,13 @@ export const useMail = create<MailState>((set, get) => ({
   searchResults: [],
 
   refresh: async () => {
-    const [inbox, done, reminders] = await Promise.all([
+    const [inbox, done, reminders, starred] = await Promise.all([
       backend.listThreads("inbox"),
       backend.listThreads("done"),
       backend.listThreads("reminders"),
+      backend.listThreads("starred"),
     ]);
-    set({ inbox, done, reminders, loaded: true });
+    set({ inbox, done, reminders, starred, loaded: true });
     const s = get();
     const max = visibleThreads(s).length - 1;
     if (s.selectedIndex > max) set({ selectedIndex: Math.max(0, max) });
@@ -133,13 +140,30 @@ export const useMail = create<MailState>((set, get) => ({
     await get().refresh();
   },
 
-  trash: async (id) => {
+  hide: async (id, reason) => {
     set((s) => ({
       inbox: s.inbox.filter((t) => t.id !== id),
       done: s.done.filter((t) => t.id !== id),
       reminders: s.reminders.filter((t) => t.id !== id),
+      starred: s.starred.filter((t) => t.id !== id),
     }));
-    await backend.trashThread(id);
+    await backend.hideThread(id, reason);
+    await get().refresh();
+  },
+
+  restore: async (id) => {
+    await backend.restoreThread(id);
+    await get().refresh();
+  },
+
+  mute: async (id) => {
+    set((s) => ({ inbox: s.inbox.filter((t) => t.id !== id) }));
+    await backend.muteThread(id);
+    await get().refresh();
+  },
+
+  unmute: async (id) => {
+    await backend.unmuteThread(id);
     await get().refresh();
   },
 
@@ -148,6 +172,7 @@ export const useMail = create<MailState>((set, get) => ({
       list.map((t) => (t.id === id ? { ...t, starred: !t.starred } : t));
     set((s) => ({ inbox: flip(s.inbox), done: flip(s.done), reminders: flip(s.reminders) }));
     await backend.toggleStar(id);
+    await get().refresh();
   },
 
   snooze: async (id, untilMs) => {

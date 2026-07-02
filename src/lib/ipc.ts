@@ -15,11 +15,12 @@ import type {
   Streaks,
   Thread,
   ThreadId,
+  UnsubResult,
   ZeroEvent,
 } from "./types";
 import { MockBackend } from "./mock";
 
-export type MailView = "inbox" | "done" | "reminders";
+export type MailView = "inbox" | "done" | "reminders" | "starred";
 
 export interface BulkArchiveOpts {
   splitId: string | null; // null = whole inbox
@@ -48,14 +49,22 @@ export interface Backend {
   getThread(id: ThreadId): Promise<Message[]>;
   archiveThread(id: ThreadId): Promise<void>;
   moveToInbox(id: ThreadId): Promise<void>;
-  trashThread(id: ThreadId): Promise<void>;
+  /** Soft-hide: trash or spam. Undo via restoreThread. */
+  hideThread(id: ThreadId, reason: "trash" | "spam"): Promise<void>;
+  restoreThread(id: ThreadId): Promise<void>;
+  muteThread(id: ThreadId): Promise<void>;
+  unmuteThread(id: ThreadId): Promise<void>;
+  unsubscribeThread(id: ThreadId): Promise<UnsubResult>;
   toggleStar(id: ThreadId): Promise<boolean>;
   snoozeThread(id: ThreadId, untilMs: number): Promise<void>;
   markUnread(id: ThreadId): Promise<void>;
   markRead(id: ThreadId): Promise<void>;
   moveLabel(id: ThreadId, label: string): Promise<void>;
   listLabels(): Promise<string[]>;
-  sendMail(mail: OutgoingMail): Promise<void>;
+  /** Schedule a send; ~10s delay = the Undo Send window. Returns outbox id. */
+  queueMail(mail: OutgoingMail, delayMs: number): Promise<number>;
+  /** Undo Send: reclaim the draft before the outbox flushes. Throws if sent. */
+  cancelOutbox(outboxId: number): Promise<OutgoingMail>;
   search(query: string): Promise<SearchResult[]>;
   bulkArchive(opts: BulkArchiveOpts): Promise<number>;
 
@@ -117,8 +126,20 @@ class TauriBackend implements Backend {
   moveToInbox(id: ThreadId) {
     return invoke<void>("move_to_inbox", { threadId: id });
   }
-  trashThread(id: ThreadId) {
-    return invoke<void>("trash_thread", { threadId: id });
+  hideThread(id: ThreadId, reason: "trash" | "spam") {
+    return invoke<void>("hide_thread", { threadId: id, reason });
+  }
+  restoreThread(id: ThreadId) {
+    return invoke<void>("restore_thread", { threadId: id });
+  }
+  muteThread(id: ThreadId) {
+    return invoke<void>("mute_thread", { threadId: id });
+  }
+  unmuteThread(id: ThreadId) {
+    return invoke<void>("unmute_thread", { threadId: id });
+  }
+  unsubscribeThread(id: ThreadId) {
+    return invoke<UnsubResult>("unsubscribe_thread", { threadId: id });
   }
   toggleStar(id: ThreadId) {
     return invoke<boolean>("toggle_star", { threadId: id });
@@ -138,8 +159,11 @@ class TauriBackend implements Backend {
   listLabels() {
     return invoke<string[]>("list_labels");
   }
-  sendMail(mail: OutgoingMail) {
-    return invoke<void>("send_mail", { mail });
+  queueMail(mail: OutgoingMail, delayMs: number) {
+    return invoke<number>("queue_mail", { mail, delayMs });
+  }
+  cancelOutbox(outboxId: number) {
+    return invoke<OutgoingMail>("cancel_outbox", { outboxId });
   }
   search(query: string) {
     return invoke<SearchResult[]>("search_threads", { query });

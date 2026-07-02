@@ -28,6 +28,7 @@
   --accent: #6d7ff2;
   --accent-strong: #8496ff;
   --accent-dim: rgba(109, 127, 242, 0.16);
+  --on-accent: #0e1014;
   --success: #3ecf8e;
   --warning: #e8b93e;
   --danger: #e5645f;
@@ -38,6 +39,46 @@
   --focus-ring: 0 0 0 2px rgba(132, 150, 255, 0.75);
 
   color-scheme: dark;
+}
+
+/* Light theme — same token contract, tuned (not inverted) for perceptual
+   contrast: surfaces get lighter as they come nearer, accents deepen so
+   they hold their own against dark text, WCAG AA throughout. */
+html[data-theme="light"] {
+  --bg-base: #eef0f4;
+  --bg-surface: #f8f9fb;
+  --bg-raised: #ffffff;
+  --bg-overlay: #ffffff;
+  --bg-hover: #e8ebf1;
+  --bg-selected: #dfe5f3;
+
+  --text-primary: rgba(24, 28, 36, 0.92);
+  --text-secondary: rgba(40, 46, 58, 0.72);
+  --text-muted: rgba(60, 68, 84, 0.52);
+
+  --accent: #4655c4;
+  --accent-strong: #3646b8;
+  --accent-dim: rgba(70, 85, 196, 0.12);
+  --on-accent: #ffffff;
+  --success: #178a5c;
+  --warning: #9a7410;
+  --danger: #c03a35;
+
+  --border: rgba(20, 26, 40, 0.1);
+  --border-strong: rgba(20, 26, 40, 0.2);
+
+  --focus-ring: 0 0 0 2px rgba(70, 85, 196, 0.65);
+
+  color-scheme: light;
+}
+
+html[data-theme="light"] ::selection {
+  background: rgba(70, 85, 196, 0.22);
+}
+html[data-theme="light"] *::-webkit-scrollbar-thumb {
+  background: rgba(20, 26, 40, 0.22);
+  background-clip: content-box;
+  border: 2px solid transparent;
 }
 
 @theme {
@@ -53,6 +94,7 @@
   --color-accent: var(--accent);
   --color-accent-strong: var(--accent-strong);
   --color-accent-dim: var(--accent-dim);
+  --color-on-accent: var(--on-accent);
   --color-ok: var(--success);
   --color-warn: var(--warning);
   --color-bad: var(--danger);

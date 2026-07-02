@@ -48,6 +48,10 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "thread.replyAllOrOpen": "enter",
   "thread.star": "s",
   "thread.trash": "#",
+  "thread.spam": "!",
+  "thread.mute": "m",
+  "thread.unsubscribe": "mod+u",
+  undo: "z|mod+z",
   "list.next": "j|down",
   "list.prev": "k|up",
   "thread.unread": "u",
@@ -60,9 +64,13 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "goto.other": "g o",
   "goto.done": "g e",
   "goto.reminders": "g h",
+  "goto.starred": "g s",
   "compose.ai": "mod+j",
   "compose.send": "mod+enter",
   "compose.sendDone": "mod+shift+enter",
+  "compose.sendLater": "mod+shift+l",
+  "compose.snippet": "mod+;",
+  "theme.toggle": "",
   "thread.cycleSuggestion": "tab",
   back: "escape",
   "inbox.zeroSweep": "",
@@ -110,6 +118,7 @@ export function defaultSettings(): Settings {
     celebrationDir: null,
     shortcuts: { ...DEFAULT_SHORTCUTS },
     signatures: {},
+    theme: "dark",
   };
 }
 

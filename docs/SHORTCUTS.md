@@ -19,6 +19,7 @@ Aligned with **Superhuman v7 (Windows & Linux edition)**. `mod` = `Ctrl` on Wind
 |---|---|---|---|
 | `G` then `I` | Inbox / Important | `G` then `E` | Done |
 | `G` then `O` | Other | `G` then `H` | Reminders |
+| `G` then `S` | Starred | | |
 
 ## Triage
 
@@ -29,8 +30,12 @@ Aligned with **Superhuman v7 (Windows & Linux edition)**. `mod` = `Ctrl` on Wind
 | `H` | Remind me / snooze… |
 | `S` | Star / unstar |
 | `#` | Trash (Gmail keeps it recoverable for 30 days) |
+| `!` | Mark spam |
+| `M` | Mute — archive now and auto-archive future replies |
+| `Z` (or `Ctrl+Z`) | **Undo** the last action (done, trash, spam, mute, snooze, star, send…) |
 | `U` | Mark read / unread (toggle) |
 | `V` | Move to folder / label… |
+| `Ctrl+U` | Unsubscribe (opens the newsletter's List-Unsubscribe link) |
 
 ## Conversations
 
@@ -50,15 +55,17 @@ Aligned with **Superhuman v7 (Windows & Linux edition)**. `mod` = `Ctrl` on Wind
 | Key | Action |
 |---|---|
 | `Ctrl+J` | Write with AI (empty body: draft from prompt · existing text: edit with instruction) |
-| `Ctrl+Enter` | Send |
-| `Ctrl+Shift+Enter` | **Send & Mark Done** |
+| `Ctrl+Enter` | Send — **with a 10-second Undo window (`Z`)** |
+| `Ctrl+Shift+Enter` | Send & Mark Done |
+| `Ctrl+Shift+L` | Send Later… (delivers even after an app restart) |
+| `Ctrl+;` | Insert snippet (from Settings → Knowledge Base) |
 | `Esc` | Close AI bar, then discard |
 
 ## Palette-only
 
 - **Get Me To Zero (bulk archive)…** · **Sync Now** · **Switch to <account>** (also Ctrl+N)
 
-Superhuman keys not yet mapped (their features land in later releases): `!` spam, `M` mute, `Ctrl+U` unsubscribe, `X` selection, `Z` undo, `G-S/D/T` starred/drafts/sent views, calendar keys.
+Superhuman keys not yet mapped (their features land in later releases): `X` bulk selection, `G-D/T` drafts/sent views, calendar keys.
 
 ---
 

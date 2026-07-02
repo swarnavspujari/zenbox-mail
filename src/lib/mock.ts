@@ -33,9 +33,13 @@ const LS_KEY = "zenbox-mock-state-v1";
 interface PersistedState {
   threadPatches: Record<
     string,
-    Partial<Pick<Thread, "inInbox" | "unread" | "snoozedUntil" | "labels" | "starred">>
+    Partial<Pick<Thread, "inInbox" | "unread" | "snoozedUntil" | "labels" | "starred">> & {
+      hidden?: "trash" | "spam" | null;
+    }
   >;
-  trashed: string[];
+  trashed: string[]; // legacy hard-trash list (pre-undo); still honored
+  outbox: { id: number; mail: OutgoingMail; sendAt: number }[];
+  outboxSeq: number;
   settings: Settings;
   kb: KnowledgeBase;
   streaks: Streaks;
@@ -48,6 +52,8 @@ function loadPersisted(): PersistedState {
   const fresh: PersistedState = {
     threadPatches: {},
     trashed: [],
+    outbox: [],
+    outboxSeq: 1,
     settings: defaultSettings(),
     kb: defaultKnowledgeBase(),
     streaks: { daily: 0, weekly: 0, lastZeroDay: null },
@@ -95,7 +101,11 @@ export class MockBackend implements Backend {
     this.threads = this.threads.filter((t) => !this.state.trashed.includes(t.id));
     // Return snoozed threads whose timer already elapsed while app was closed.
     this.wakeDueSnoozes();
-    setInterval(() => this.wakeDueSnoozes(), 30_000);
+    this.flushOutbox(); // sends that came due while the tab was closed
+    setInterval(() => {
+      this.wakeDueSnoozes();
+      this.flushOutbox();
+    }, 5_000);
   }
 
   private inActiveAccount(t: Thread): boolean {
@@ -103,6 +113,20 @@ export class MockBackend implements Backend {
       (this.accountOf.get(t.id) ?? this.state.activeAccount) ===
       this.state.activeAccount
     );
+  }
+
+  private hiddenOf(id: string): "trash" | "spam" | null {
+    return this.state.threadPatches[id]?.hidden ?? null;
+  }
+
+  private flushOutbox() {
+    const now = Date.now();
+    const due = this.state.outbox.filter((o) => o.sendAt <= now);
+    if (due.length === 0) return;
+    this.state.outbox = this.state.outbox.filter((o) => o.sendAt > now);
+    for (const o of due) this.deliverNow(o.mail);
+    this.persist();
+    this.notify();
   }
 
   private persist() {
@@ -178,11 +202,14 @@ export class MockBackend implements Backend {
 
   async listThreads(view: MailView): Promise<Thread[]> {
     const byDate = (a: Thread, b: Thread) => b.lastDate - a.lastDate;
-    const mine = this.threads.filter((t) => this.inActiveAccount(t));
+    const mine = this.threads.filter(
+      (t) => this.inActiveAccount(t) && this.hiddenOf(t.id) === null
+    );
     if (view === "inbox")
       return mine.filter((t) => t.inInbox && t.snoozedUntil === null).sort(byDate);
     if (view === "reminders")
       return mine.filter((t) => t.snoozedUntil !== null).sort(byDate);
+    if (view === "starred") return mine.filter((t) => t.starred).sort(byDate);
     return mine.filter((t) => !t.inInbox && t.snoozedUntil === null).sort(byDate);
   }
 
@@ -201,11 +228,31 @@ export class MockBackend implements Backend {
   async moveToInbox(id: ThreadId) {
     this.patch(id, { inInbox: true, snoozedUntil: null });
   }
-  async trashThread(id: ThreadId) {
-    this.threads = this.threads.filter((t) => t.id !== id);
-    this.messages.delete(id);
-    this.state.trashed.push(id);
-    this.persist();
+  async hideThread(id: ThreadId, reason: "trash" | "spam") {
+    this.patch(id, { hidden: reason, inInbox: false, snoozedUntil: null });
+  }
+  async restoreThread(id: ThreadId) {
+    this.patch(id, { hidden: null, inInbox: true, snoozedUntil: null });
+  }
+  async muteThread(id: ThreadId) {
+    const t = this.threads.find((t) => t.id === id);
+    if (!t) return;
+    const labels = t.labels.includes("Muted") ? t.labels : [...t.labels, "Muted"];
+    this.patch(id, { labels, inInbox: false });
+  }
+  async unmuteThread(id: ThreadId) {
+    const t = this.threads.find((t) => t.id === id);
+    if (!t) return;
+    this.patch(id, { labels: t.labels.filter((l) => l !== "Muted"), inInbox: true });
+  }
+  async unsubscribeThread(id: ThreadId) {
+    const msgs = this.messages.get(id) ?? [];
+    const newsletter = msgs.some(
+      (m) => m.from.includes("substack") || m.from.includes("strictlyvc")
+    );
+    return newsletter
+      ? { kind: "opened" as const, target: `https://unsubscribe.example.com/${id}` }
+      : { kind: "none" as const, target: null };
   }
   async toggleStar(id: ThreadId): Promise<boolean> {
     const t = this.threads.find((t) => t.id === id);
@@ -240,7 +287,23 @@ export class MockBackend implements Backend {
     return [...set];
   }
 
-  async sendMail(mail: OutgoingMail) {
+  async queueMail(mail: OutgoingMail, delayMs: number): Promise<number> {
+    const id = this.state.outboxSeq++;
+    this.state.outbox.push({ id, mail, sendAt: Date.now() + delayMs });
+    this.persist();
+    setTimeout(() => this.flushOutbox(), delayMs + 100);
+    return id;
+  }
+
+  async cancelOutbox(outboxId: number): Promise<OutgoingMail> {
+    const entry = this.state.outbox.find((o) => o.id === outboxId);
+    if (!entry) throw new Error("already sent");
+    this.state.outbox = this.state.outbox.filter((o) => o.id !== outboxId);
+    this.persist();
+    return entry.mail;
+  }
+
+  private deliverNow(mail: OutgoingMail) {
     const nowMs = Date.now();
     if (mail.threadId) {
       const msgs = this.messages.get(mail.threadId);

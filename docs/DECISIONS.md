@@ -47,5 +47,15 @@ Running log of every non-default choice. Newest last.
 32. **Linux (Fedora) is a declared target**: keyring grew the Secret Service backend, CI gained an ubuntu `cargo check` with WebKitGTK deps, SETUP documents Fedora/Debian packages. Full Linux smoke test gates calling it "supported".
 33. **Settings merge on read**: saved settings gain new default shortcuts/providers on upgrade instead of being wiped or frozen.
 
+## v0.3 — Undo, Undo Send/Send Later, spam/mute, starred, snippets, unsubscribe, light theme (2026-07-01)
+34. **Undo (`Z`) is a frontend inverse-action stack**, not an event-sourced log: each triage action pushes its inverse (done↔not-done, trash/spam→restore, mute→unmute, snooze→inbox, star↔unstar). Local-first and honest — no fake "undo" that leaves server state changed.
+35. **Trash/spam became soft-hides** (`threads.hidden` column) so undo restores instantly from the local row; server-side they use `threads.trash` / SPAM labels, and restore uses `untrash`/label-removal + INBOX re-add. Sync can't resurrect hidden threads (inbox/done queries exclude trash+spam server-side too).
+36. **Undo Send = a 10-second outbox fuse.** Sends are queued in a SQLite `outbox` table and flushed by a 3s background task; `Z` inside the window reclaims the draft into compose. **Send Later** is the same mechanism with a user-picked timestamp — it survives app restarts, needs no server. Failures retry with a 5-attempt cap. Trade-off (documented): a scheduled send only leaves the machine while the app is running.
+37. **Mute** = custom `Muted` label + archive; a sync pass re-archives any muted thread that resurfaces with new replies. Matches Gmail's mute semantics without server rules.
+38. **Unsubscribe (`Ctrl+U`)** reads the RFC-2369 `List-Unsubscribe` header captured at sync: https targets open in the browser, mailto targets prefill a compose. No List-Unsubscribe → clear toast. One-click POST (RFC 8058) is a possible refinement.
+39. **Starred view** (`G S`) lists starred threads across inbox+done for the active account. Drafts/Sent views deferred (drafts aren't synced yet; sent threads need a `q=in:sent` sync pass).
+40. **Light theme** is a token-set swap on `html[data-theme]` — tuned, not inverted (deeper accents, `--on-accent` flips to white). Dark stays default per the original spec.
+41. Outlook's Graph adapter moves to **v0.4** — v0.3 spent its budget on triage parity, which benefits every account type.
+
 ## Model defaults (editable in Settings)
 - **NIM (default): `deepseek-ai/deepseek-v4-pro`** @ `https://integrate.api.nvidia.com/v1` (alt: `deepseek-v4-flash`) · Claude: `claude-sonnet-5` · OpenAI: `gpt-5.2`

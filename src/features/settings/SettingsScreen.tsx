@@ -19,12 +19,13 @@ const TABS = [
   ["splits", "Splits"],
   ["shortcuts", "Shortcuts"],
   ["celebration", "Inbox Zero"],
+  ["appearance", "Appearance"],
 ] as const;
 
 const inputCls =
   "w-full rounded-md border border-line-strong bg-raised px-3 py-2 text-[13px] text-ink outline-none placeholder:text-ink-3 focus:border-accent";
 const btnCls =
-  "rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-[#0e1014] hover:bg-accent-strong disabled:opacity-50";
+  "rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-on-accent hover:bg-accent-strong disabled:opacity-50";
 const btnGhost =
   "rounded-md border border-line-strong px-3 py-1.5 text-[12.5px] text-ink-2 hover:bg-hover";
 
@@ -229,7 +230,7 @@ function AccountTab() {
         hint="Microsoft Graph support is scaffolded and lands next release. It will use an Azure app registration (public client + PKCE, Mail.ReadWrite + Mail.Send) the same way Gmail uses its OAuth client — setup steps are already drafted in docs/SETUP.md."
       >
         <button className={btnGhost} disabled>
-          Coming in v0.3
+          Coming next release
         </button>
       </Section>
     </>
@@ -781,6 +782,38 @@ function CelebrationTab() {
   );
 }
 
+// ---------------------------------------------------------------- Appearance
+
+function AppearanceTab() {
+  const theme = useSettings((s) => s.settings.theme);
+  return (
+    <Section
+      title="Theme"
+      hint="Dark is the default and follows Superhuman's dark-theme principles. Light is tuned for perceptual contrast, not just inverted."
+    >
+      <div className="flex gap-3">
+        {(["dark", "light"] as const).map((t) => (
+          <label
+            key={t}
+            className={`flex flex-1 cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 ${
+              theme === t ? "border-accent bg-accent-dim" : "border-line bg-surface"
+            }`}
+          >
+            <input
+              type="radio"
+              name="theme"
+              checked={theme === t}
+              onChange={() => void useSettings.getState().save({ theme: t })}
+              className="accent-[#6d7ff2]"
+            />
+            <span className="text-[13px] capitalize text-ink">{t}</span>
+          </label>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 // ---------------------------------------------------------------- shell
 
 export function SettingsScreen() {
@@ -814,6 +847,7 @@ export function SettingsScreen() {
           {tab === "splits" && <SplitsTab />}
           {tab === "shortcuts" && <ShortcutsTab />}
           {tab === "celebration" && <CelebrationTab />}
+          {tab === "appearance" && <AppearanceTab />}
         </div>
       </div>
     </div>

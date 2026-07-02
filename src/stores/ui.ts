@@ -19,7 +19,7 @@ export interface ComposeState {
   quote: string; // read-only quoted context shown under the editor
 }
 
-export type Picker = "none" | "snooze" | "move" | "zeroSweep";
+export type Picker = "none" | "snooze" | "move" | "zeroSweep" | "sendLater" | "snippet";
 
 interface UiState {
   screen: Screen;

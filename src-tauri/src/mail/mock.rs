@@ -414,6 +414,12 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
                     )
                 })
                 .collect();
+            // newsletters get a plausible List-Unsubscribe so Ctrl+U is demoable
+            let unsub = if sm.from.contains("substack") || sm.from.contains("strictlyvc") {
+                Some(format!("<https://unsubscribe.example.com/{}>", s.id))
+            } else {
+                None
+            };
             msgs.push((
                 Message {
                     id: mid.clone(),
@@ -431,6 +437,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
                     attachments: vec![],
                 },
                 None,
+                unsub,
                 atts,
             ));
         }

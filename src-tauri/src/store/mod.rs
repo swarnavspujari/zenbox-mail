@@ -74,6 +74,19 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
         "ALTER TABLE threads ADD COLUMN account_id TEXT NOT NULL DEFAULT 'demo@zenbox.local'",
         [],
     );
+    // v0.3 migrations: soft trash/spam, unsubscribe header, scheduled sends.
+    let _ = conn.execute("ALTER TABLE threads ADD COLUMN hidden TEXT", []);
+    let _ = conn.execute("ALTER TABLE messages ADD COLUMN list_unsubscribe TEXT", []);
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS outbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            send_at INTEGER NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0
+        );",
+    )
+    .map_err(|e| e.to_string())?;
     Ok(conn)
 }
 
@@ -147,7 +160,11 @@ pub fn default_settings() -> Settings {
         ("thread.replyAll", "a"),
         ("thread.star", "s"),
         ("thread.trash", "#"),
+        ("thread.spam", "!"),
+        ("thread.mute", "m"),
         ("thread.notDone", "shift+e"),
+        ("thread.unsubscribe", "mod+u"),
+        ("undo", "z|mod+z"),
         ("search", "/"),
         ("ai.ask", "?"),
         ("split.next", "tab"),
@@ -156,9 +173,13 @@ pub fn default_settings() -> Settings {
         ("goto.other", "g o"),
         ("goto.done", "g e"),
         ("goto.reminders", "g h"),
+        ("goto.starred", "g s"),
         ("compose.ai", "mod+j"),
         ("compose.send", "mod+enter"),
         ("compose.sendDone", "mod+shift+enter"),
+        ("compose.sendLater", "mod+shift+l"),
+        ("compose.snippet", "mod+;"),
+        ("theme.toggle", ""),
         ("thread.cycleSuggestion", "tab"),
         ("back", "escape"),
         ("inbox.zeroSweep", ""),
@@ -236,6 +257,7 @@ pub fn default_settings() -> Settings {
         celebration_dir: None,
         shortcuts,
         signatures: HashMap::new(),
+        theme: "dark".into(),
     }
 }
 
@@ -312,10 +334,11 @@ pub fn list_threads(conn: &Connection, view: &str, account_id: &str) -> Result<V
     let where_clause = match view {
         "inbox" => "in_inbox = 1 AND snoozed_until IS NULL",
         "reminders" => "snoozed_until IS NOT NULL",
+        "starred" => "starred = 1",
         _ => "in_inbox = 0 AND snoozed_until IS NULL",
     };
     let sql = format!(
-        "SELECT {THREAD_COLS} FROM threads WHERE {where_clause} AND account_id = ?1 ORDER BY last_date DESC LIMIT 500"
+        "SELECT {THREAD_COLS} FROM threads WHERE {where_clause} AND hidden IS NULL AND account_id = ?1 ORDER BY last_date DESC LIMIT 500"
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
@@ -390,12 +413,21 @@ pub fn get_messages(conn: &Connection, thread_id: &str) -> Result<Vec<Message>, 
     Ok(msgs)
 }
 
+/// One message row bound for upsert: (message, rfc Message-ID,
+/// List-Unsubscribe header, attachments as (meta, remote id, cached text)).
+pub type MsgRow = (
+    Message,
+    Option<String>,
+    Option<String>,
+    Vec<(Attachment, Option<String>, Option<String>)>,
+);
+
 /// Upsert a thread and its messages (used by both mock seeding and Gmail sync).
 pub fn upsert_thread(
     conn: &Connection,
     account_id: &str,
     t: &Thread,
-    msgs: &[(Message, Option<String>, Vec<(Attachment, Option<String>, Option<String>)>)],
+    msgs: &[MsgRow],
 ) -> Result<(), String> {
     conn.execute(
         "INSERT INTO threads (id, subject, snippet, participants, message_count, last_date,
@@ -423,14 +455,15 @@ pub fn upsert_thread(
     )
     .map_err(|e| e.to_string())?;
 
-    for (m, rfc_id, atts) in msgs {
+    for (m, rfc_id, list_unsub, atts) in msgs {
         let is_new = conn
             .query_row("SELECT 1 FROM messages WHERE id = ?1", params![m.id], |_| Ok(()))
             .is_err();
         conn.execute(
             "INSERT INTO messages (id, thread_id, from_addr, from_name, to_addrs, cc_addrs,
-                                   subject, snippet, body_text, body_html, date, unread, rfc_message_id)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+                                   subject, snippet, body_text, body_html, date, unread,
+                                   rfc_message_id, list_unsubscribe)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
              ON CONFLICT(id) DO UPDATE SET unread=excluded.unread",
             params![
                 m.id,
@@ -446,6 +479,7 @@ pub fn upsert_thread(
                 m.date,
                 m.unread as i64,
                 rfc_id,
+                list_unsub,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -515,6 +549,109 @@ pub fn set_starred(conn: &Connection, id: &str, starred: bool) -> Result<(), Str
     conn.execute("UPDATE threads SET starred = ?2 WHERE id = ?1", params![id, starred as i64])
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Soft-hide (trash/spam). The row stays so undo can restore it instantly.
+pub fn set_hidden(conn: &Connection, id: &str, reason: Option<&str>) -> Result<(), String> {
+    match reason {
+        Some(r) => conn.execute(
+            "UPDATE threads SET hidden = ?2, in_inbox = 0, snoozed_until = NULL WHERE id = ?1",
+            params![id, r],
+        ),
+        None => conn.execute(
+            "UPDATE threads SET hidden = NULL, in_inbox = 1, snoozed_until = NULL WHERE id = ?1",
+            params![id],
+        ),
+    }
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn hidden_reason(conn: &Connection, id: &str) -> Option<String> {
+    conn.query_row("SELECT hidden FROM threads WHERE id = ?1", params![id], |r| {
+        r.get::<_, Option<String>>(0)
+    })
+    .ok()
+    .flatten()
+}
+
+/// Inbox threads carrying the Muted label — sync auto-archives these.
+pub fn muted_inbox_threads(conn: &Connection, account_id: &str) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT id FROM threads
+         WHERE account_id = ?1 AND in_inbox = 1 AND hidden IS NULL AND labels LIKE '%\"Muted\"%'",
+    ) else {
+        return vec![];
+    };
+    stmt.query_map(params![account_id], |r| r.get(0))
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
+/// Most recent List-Unsubscribe header in a thread, if any message has one.
+pub fn unsubscribe_header(conn: &Connection, thread_id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT list_unsubscribe FROM messages
+         WHERE thread_id = ?1 AND list_unsubscribe IS NOT NULL
+         ORDER BY date DESC LIMIT 1",
+        params![thread_id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+}
+
+// ---------------------------------------------------------------- outbox
+
+pub fn outbox_add(
+    conn: &Connection,
+    account_id: &str,
+    mail: &OutgoingMail,
+    send_at: i64,
+) -> Result<i64, String> {
+    conn.execute(
+        "INSERT INTO outbox (account_id, payload, send_at) VALUES (?1, ?2, ?3)",
+        params![account_id, serde_json::to_string(mail).map_err(|e| e.to_string())?, send_at],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Remove a pending send and hand the draft back (None = already sent).
+pub fn outbox_cancel(conn: &Connection, id: i64) -> Option<OutgoingMail> {
+    let payload: Option<String> = conn
+        .query_row("SELECT payload FROM outbox WHERE id = ?1", params![id], |r| r.get(0))
+        .ok();
+    let mail = payload.and_then(|p| serde_json::from_str(&p).ok())?;
+    conn.execute("DELETE FROM outbox WHERE id = ?1", params![id]).ok()?;
+    Some(mail)
+}
+
+pub fn outbox_due(conn: &Connection, now_ms: i64) -> Vec<(i64, String, OutgoingMail)> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT id, account_id, payload FROM outbox WHERE send_at <= ?1 AND attempts < 5",
+    ) else {
+        return vec![];
+    };
+    stmt.query_map(params![now_ms], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+    })
+    .map(|rows| {
+        rows.filter_map(|r| r.ok())
+            .filter_map(|(id, acc, p)| serde_json::from_str(&p).ok().map(|m| (id, acc, m)))
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+pub fn outbox_delete(conn: &Connection, id: i64) {
+    let _ = conn.execute("DELETE FROM outbox WHERE id = ?1", params![id]);
+}
+
+pub fn outbox_bump_attempts(conn: &Connection, id: i64) {
+    let _ = conn.execute("UPDATE outbox SET attempts = attempts + 1 WHERE id = ?1", params![id]);
+    // rows that exhausted their retries are dropped so they can't loop forever
+    let _ = conn.execute("DELETE FROM outbox WHERE attempts >= 5", []);
 }
 
 /// Trash = remove the thread from the local cache entirely (Gmail keeps it
@@ -623,7 +760,7 @@ pub fn search(conn: &Connection, query: &str, account_id: &str) -> Result<Vec<Se
         .prepare(
             "SELECT t.id, t.subject, t.snippet, t.last_date
              FROM mail_fts f JOIN threads t ON t.id = f.thread_id
-             WHERE mail_fts MATCH ?1 AND t.account_id = ?2
+             WHERE mail_fts MATCH ?1 AND t.account_id = ?2 AND t.hidden IS NULL
              GROUP BY t.id ORDER BY t.last_date DESC LIMIT 60",
         )
         .map_err(|e| e.to_string())?;

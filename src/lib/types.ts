@@ -100,6 +100,12 @@ export interface Settings {
   celebrationDir: string | null; // user-supplied folder of images; null = bundled
   shortcuts: Record<string, string>; // commandId -> key expression
   signatures: Record<string, string>; // account email -> signature text
+  theme: "dark" | "light";
+}
+
+export interface UnsubResult {
+  kind: "opened" | "mailto" | "none";
+  target: string | null;
 }
 
 export interface DraftRequest {

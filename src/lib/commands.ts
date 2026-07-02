@@ -2,6 +2,7 @@
 // keyboard engine binds them via the (remappable) shortcut map in settings.
 import { backend } from "./ipc";
 import type { Binding } from "./keyboard";
+import { popUndo, pushUndo } from "./undo";
 import { useMail, visibleThreads } from "@/stores/mail";
 import { activeSignature, useSettings } from "@/stores/settings";
 import {
@@ -103,6 +104,18 @@ function pickedSuggestion(): string | undefined {
     : u.suggestions[u.suggestionIndex];
 }
 
+/** Standard undo entry for a triage action: run the inverse, refresh, toast. */
+export function pushTriageUndo(label: string, inverse: () => Promise<void>) {
+  pushUndo({
+    label,
+    run: async () => {
+      await inverse();
+      await mail().refresh();
+      ui().showToast(`Undone — ${label}`);
+    },
+  });
+}
+
 // ---- the registry -----------------------------------------------------------
 
 export function allCommands(): Command[] {
@@ -140,6 +153,7 @@ export function allCommands(): Command[] {
         if (!id) return;
         if (mail().openThreadId === id) mail().closeThread();
         await mail().archive(id);
+        pushTriageUndo("Mark Done", () => mail().moveToInbox(id));
         ui().showToast("Done");
         await ui().checkInboxZero();
       },
@@ -154,6 +168,7 @@ export function allCommands(): Command[] {
         if (!id) return;
         if (mail().openThreadId === id) mail().closeThread();
         await mail().moveToInbox(id);
+        pushTriageUndo("Mark Not Done", () => mail().archive(id));
         ui().showToast("Moved to inbox");
       },
     },
@@ -166,9 +181,77 @@ export function allCommands(): Command[] {
         const id = actionTargetThreadId();
         if (!id) return;
         if (mail().openThreadId === id) mail().closeThread();
-        await mail().trash(id);
-        ui().showToast("Moved to trash");
+        await mail().hide(id, "trash");
+        pushTriageUndo("Trash", () => mail().restore(id));
+        ui().showToast("Moved to trash — Z to undo");
         await ui().checkInboxZero();
+      },
+    },
+    {
+      id: "thread.spam",
+      title: "Mark Spam",
+      group: "Triage",
+      when: () => hasTarget() && !inCompose(),
+      run: async () => {
+        const id = actionTargetThreadId();
+        if (!id) return;
+        if (mail().openThreadId === id) mail().closeThread();
+        await mail().hide(id, "spam");
+        pushTriageUndo("Mark Spam", () => mail().restore(id));
+        ui().showToast("Marked spam — Z to undo");
+        await ui().checkInboxZero();
+      },
+    },
+    {
+      id: "thread.mute",
+      title: "Mute (archive + auto-archive replies)",
+      group: "Triage",
+      when: () => hasTarget() && !inCompose(),
+      run: async () => {
+        const id = actionTargetThreadId();
+        if (!id) return;
+        if (mail().openThreadId === id) mail().closeThread();
+        await mail().mute(id);
+        pushTriageUndo("Mute", () => mail().unmute(id));
+        ui().showToast("Muted — Z to undo");
+        await ui().checkInboxZero();
+      },
+    },
+    {
+      id: "thread.unsubscribe",
+      title: "Unsubscribe",
+      group: "Triage",
+      when: () => hasTarget() && !inCompose(),
+      run: async () => {
+        const id = actionTargetThreadId();
+        if (!id) return;
+        const r = await backend.unsubscribeThread(id);
+        if (r.kind === "opened") {
+          ui().showToast("Unsubscribe page opened in your browser");
+        } else if (r.kind === "mailto" && r.target) {
+          ui().startCompose({
+            mode: "new",
+            threadId: null,
+            to: r.target,
+            cc: "",
+            subject: "Unsubscribe",
+            body: "Please unsubscribe me from this list.",
+            signature: "",
+            quote: "",
+          });
+        } else {
+          ui().showToast("No unsubscribe link in this thread");
+        }
+      },
+    },
+    {
+      id: "undo",
+      title: "Undo",
+      group: "General",
+      when: () => !inCompose(),
+      run: async () => {
+        const handled = await popUndo();
+        if (!handled) ui().showToast("Nothing to undo");
       },
     },
     {
@@ -180,6 +263,7 @@ export function allCommands(): Command[] {
         const id = actionTargetThreadId();
         if (!id) return;
         await mail().toggleStar(id);
+        pushTriageUndo("Star", () => mail().toggleStar(id));
       },
     },
     {
@@ -375,6 +459,17 @@ export function allCommands(): Command[] {
       },
     },
     {
+      id: "goto.starred",
+      title: "Go to Starred",
+      group: "Navigate",
+      when: () => !inCompose(),
+      run: () => {
+        mail().closeThread();
+        mail().setListView("starred");
+        ui().setScreen("mail");
+      },
+    },
+    {
       id: "compose.ai",
       title: "Write with AI",
       group: "AI",
@@ -403,6 +498,29 @@ export function allCommands(): Command[] {
         window.dispatchEvent(
           new CustomEvent("zenbox:send", { detail: { markDone: true } })
         );
+      },
+    },
+    {
+      id: "compose.sendLater",
+      title: "Send Later…",
+      group: "Compose",
+      when: () => inCompose(),
+      run: () => ui().openPicker("sendLater"),
+    },
+    {
+      id: "compose.snippet",
+      title: "Insert Snippet…",
+      group: "Compose",
+      when: () => inCompose(),
+      run: () => ui().openPicker("snippet"),
+    },
+    {
+      id: "theme.toggle",
+      title: "Toggle Light / Dark Theme",
+      group: "General",
+      run: () => {
+        const s = useSettings.getState();
+        void s.save({ theme: s.settings.theme === "dark" ? "light" : "dark" });
       },
     },
     // Ctrl+1..9 — Superhuman-style account switching (slots are the order in
