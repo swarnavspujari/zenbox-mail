@@ -19,18 +19,8 @@ export const DEFAULT_SPLITS: Split[] = [
     op: "or",
     hideWhenEmpty: false,
   },
-  {
-    id: "calendar",
-    name: "Calendar",
-    builtin: true,
-    rules: [
-      { field: "label", contains: "CALENDAR" },
-      { field: "subject", contains: "Invitation:" },
-      { field: "from", contains: "calendar-invite" },
-    ],
-    op: "or",
-    hideWhenEmpty: false,
-  },
+  // The old builtin "Calendar" split is gone as of v0.7 — the calendar lives
+  // in a toggleable side panel now; saved copies are dropped on load.
 ];
 
 // Aligned with Superhuman v7 (Windows & Linux edition): A reply-all, S star,
@@ -72,6 +62,7 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "compose.sendLater": "mod+shift+l",
   "compose.snippet": "mod+;",
   "theme.toggle": "",
+  "calendar.toggle": "",
   "thread.cycleSuggestion": "tab",
   back: "escape",
   "inbox.zeroSweep": "",

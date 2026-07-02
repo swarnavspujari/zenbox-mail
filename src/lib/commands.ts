@@ -536,6 +536,15 @@ export function allCommands(): Command[] {
         void s.save({ theme: s.settings.theme === "dark" ? "light" : "dark" });
       },
     },
+    {
+      id: "calendar.toggle",
+      title: "Toggle Calendar Panel",
+      group: "Navigate",
+      run: () => {
+        const s = useSettings.getState();
+        void s.save({ calendarOpen: !s.settings.calendarOpen });
+      },
+    },
     // Ctrl+1..9 — Superhuman-style account switching (slots are the order in
     // Settings → Account; reassign by reordering there).
     ...Array.from({ length: 9 }, (_, i) => {

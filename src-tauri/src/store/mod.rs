@@ -193,6 +193,7 @@ pub fn default_settings() -> Settings {
         ("compose.sendLater", "mod+shift+l"),
         ("compose.snippet", "mod+;"),
         ("theme.toggle", ""),
+        ("calendar.toggle", ""),
         ("thread.cycleSuggestion", "tab"),
         ("back", "escape"),
         ("inbox.zeroSweep", ""),
@@ -231,18 +232,8 @@ pub fn default_settings() -> Settings {
                 op: "or".into(),
                 hide_when_empty: false,
             },
-            Split {
-                id: "calendar".into(),
-                name: "Calendar".into(),
-                builtin: true,
-                rules: vec![
-                    SplitRule { field: "label".into(), contains: "CALENDAR".into() },
-                    SplitRule { field: "subject".into(), contains: "Invitation:".into() },
-                    SplitRule { field: "from".into(), contains: "calendar-invite".into() },
-                ],
-                op: "or".into(),
-                hide_when_empty: false,
-            },
+            // the builtin "Calendar" split became the side panel in v0.7;
+            // get_settings drops saved copies on read
         ],
         // NIM/DeepSeek is the default because it's the key the user supplied;
         // switch to Claude/OpenAI any time in Settings.
@@ -306,6 +297,8 @@ pub fn get_settings(conn: &Connection) -> Settings {
                     s.providers.push(p);
                 }
             }
+            // v0.7: the builtin Calendar split became the side panel
+            s.splits.retain(|sp| !(sp.builtin && sp.id == "calendar"));
             s
         }
     };

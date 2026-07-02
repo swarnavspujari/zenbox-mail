@@ -86,6 +86,10 @@ function loadPersisted(): PersistedState {
           merged.settings.shortcuts[`account.${n}`] = `alt+${n}`;
         }
       }
+      // v0.7: the builtin Calendar split became the side panel
+      merged.settings.splits = merged.settings.splits.filter(
+        (sp) => !(sp.builtin && sp.id === "calendar")
+      );
       return merged;
     }
   } catch {

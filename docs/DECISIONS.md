@@ -80,5 +80,11 @@ Running log of every non-default choice. Newest last.
 57. **New-mail notifications** fire from the 30s background loop for unread-in-inbox threads newer than a boot-time watermark, only while the window is unfocused; toggle in Settings → Appearance. Window size/position persists via tauri-plugin-window-state.
 58. **Vite ignores `src-tauri/**`** — Rust saves no longer full-reload the webview (bit the smoke-test agent; would bite anyone running browser + Rust dev side by side).
 
+## v0.7 — Design pass + calendar side panel (2026-07-02)
+59. **Palette follows the user's design zip (violet, "04")**: base deepened to `#0b0c12`, accent `#7c7ff2`/`#989bfa`, selected-row indigo `#232848`; light theme's accent re-tuned to the same family. All via the existing token contract — components didn't change color code.
+60. **Header**: rotated-square logo mark + pill account chip (avatar, status dot, styled native `<select>` — custom dropdown skipped on purpose: the native one is keyboard/screen-reader correct for free).
+61. **The builtin Calendar split is gone** (bug #4: "showable and hidable on the side, not a tab"). Saved settings drop it on read (custom splits untouched); its threads fall through the normal split rules. The day panel toggles via the tab-bar button, a palette command ("Toggle Calendar Panel"), and persists in `settings.calendarOpen`.
+62. **Calendar panel is read-only day view** (7am–8pm grid, event blocks, now-line, prev/next/today) fed by `list_events` — Google Calendar for connected accounts, fixtures in demo. Week view / event creation deferred until someone asks.
+
 ## Model defaults (editable in Settings)
 - **NIM (default): `deepseek-ai/deepseek-v4-pro`** @ `https://integrate.api.nvidia.com/v1` (alt: `deepseek-v4-flash`) · Claude: `claude-sonnet-5` · OpenAI: `gpt-5.2`

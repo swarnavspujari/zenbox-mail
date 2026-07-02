@@ -96,38 +96,44 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col bg-base">
-      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
-        <span className="text-[15px] font-semibold tracking-tight text-ink">
-          ZenBox
+      <header className="flex h-12 shrink-0 items-center gap-3 bg-base px-4">
+        <span className="flex items-center gap-2.5">
+          <span className="inline-block h-[15px] w-[15px] rotate-45 rounded-[4px] bg-accent" />
+          <span className="text-[15px] font-semibold tracking-tight text-ink">
+            ZenBox
+          </span>
         </span>
+        <div className="flex items-center gap-2 rounded-full border border-line bg-surface py-1 pl-1.5 pr-2 hover:border-line-strong">
+          <ActiveAvatar email={accounts.active} />
+          <span className="h-1.5 w-1.5 rounded-full bg-ok" title="connected" />
+          {accounts.accounts.length > 1 ? (
+            <select
+              value={accounts.active}
+              onChange={(e) => {
+                void useSettings
+                  .getState()
+                  .switchAccount(e.target.value)
+                  .then(() => useMail.getState().refresh());
+              }}
+              title="Switch account (Alt+1…9)"
+              className="max-w-56 cursor-pointer appearance-none truncate bg-transparent pr-1 text-[12px] text-ink-2 outline-none"
+            >
+              {accounts.accounts.map((a, i) => (
+                <option key={a.email} value={a.email}>
+                  {i + 1} · {a.email}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="pr-1 text-[12px] text-ink-2">{accounts.active}</span>
+          )}
+        </div>
         {!isTauri && (
           <span className="rounded bg-accent-dim px-2 py-0.5 text-[11px] text-accent-strong">
             demo mode (browser)
           </span>
         )}
         <div className="flex-1" />
-        <ActiveAvatar email={accounts.active} />
-        {accounts.accounts.length > 1 ? (
-          <select
-            value={accounts.active}
-            onChange={(e) => {
-              void useSettings
-                .getState()
-                .switchAccount(e.target.value)
-                .then(() => useMail.getState().refresh());
-            }}
-            title="Switch account (Ctrl+1…9)"
-            className="rounded-md border border-line bg-raised px-2 py-1 text-[12px] text-ink-2 outline-none hover:border-line-strong"
-          >
-            {accounts.accounts.map((a, i) => (
-              <option key={a.email} value={a.email}>
-                {i + 1} · {a.email}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span className="text-[12px] text-ink-3">{accounts.active}</span>
-        )}
         {updateReady && (
           <button
             className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent hover:opacity-90"
