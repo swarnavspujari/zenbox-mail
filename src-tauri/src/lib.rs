@@ -23,6 +23,14 @@ pub struct AppState {
     cancels: Mutex<HashMap<u64, Arc<AtomicBool>>>,
 }
 
+// A Google OAuth "Desktop app" client baked in at build time (CI secrets), so
+// beta testers connect without creating their own client. Desktop clients
+// cannot keep secrets by design — Google's model accepts an embedded id/secret
+// for installed apps (PKCE still guards the flow). Keychain-pasted credentials
+// always win over these.
+const BAKED_GMAIL_CLIENT_ID: Option<&str> = option_env!("ZENBOX_GMAIL_CLIENT_ID");
+const BAKED_GMAIL_CLIENT_SECRET: Option<&str> = option_env!("ZENBOX_GMAIL_CLIENT_SECRET");
+
 const BUNDLED_CELEBRATIONS: [&str; 4] = [
     "/inbox-zero/dawn-ridge.svg",
     "/inbox-zero/quiet-lake.svg",
@@ -90,8 +98,9 @@ fn reorder_accounts(state: State<'_, AppState>, emails: Vec<String>) -> Result<A
 
 #[tauri::command]
 fn has_gmail_client() -> bool {
-    secrets::get(secrets::GMAIL_CLIENT_ID).is_some()
-        && secrets::get(secrets::GMAIL_CLIENT_SECRET).is_some()
+    (secrets::get(secrets::GMAIL_CLIENT_ID).is_some()
+        && secrets::get(secrets::GMAIL_CLIENT_SECRET).is_some())
+        || (BAKED_GMAIL_CLIENT_ID.is_some() && BAKED_GMAIL_CLIENT_SECRET.is_some())
 }
 
 #[tauri::command]
@@ -101,16 +110,18 @@ async fn start_oauth(
     client_id: String,
     client_secret: String,
 ) -> Result<AccountsState, String> {
-    // blank args = reuse the client already in the keychain
+    // blank args = keychain client, else the build's baked-in beta client
     let client_id = if client_id.trim().is_empty() {
         secrets::get(secrets::GMAIL_CLIENT_ID)
-            .ok_or("no OAuth client stored — paste the client ID and secret")?
+            .or_else(|| BAKED_GMAIL_CLIENT_ID.map(str::to_string))
+            .ok_or("no OAuth client available — paste the client ID and secret")?
     } else {
         client_id.trim().to_string()
     };
     let client_secret = if client_secret.trim().is_empty() {
         secrets::get(secrets::GMAIL_CLIENT_SECRET)
-            .ok_or("no OAuth client stored — paste the client ID and secret")?
+            .or_else(|| BAKED_GMAIL_CLIENT_SECRET.map(str::to_string))
+            .ok_or("no OAuth client available — paste the client ID and secret")?
     } else {
         client_secret.trim().to_string()
     };
@@ -120,6 +131,12 @@ async fn start_oauth(
     let outcome = mail::oauth::run_flow(&state.http, &app, &client_id, &client_secret).await?;
     let email = GmailSession::profile_email(&state.http, &outcome.access_token).await?;
     secrets::set(&secrets::gmail_refresh_entry(&email), &outcome.refresh_token)?;
+
+    // Grab the display name + photo while we hold a fresh access token.
+    if let Some(prof) = fetch_google_profile(&state.http, &outcome.access_token).await {
+        let conn = state.db.lock().unwrap();
+        let _ = store::set_json(&conn, &format!("profile:{email}"), &prof);
+    }
 
     let accounts = {
         let conn = state.db.lock().unwrap();
@@ -181,6 +198,145 @@ async fn disconnect_account(
     };
     let _ = app.emit("mail:updated", ());
     Ok(accounts)
+}
+
+/// OpenID userinfo → name + photo (photo inlined as a data: URI so the UI
+/// renders it with zero network access).
+async fn fetch_google_profile(http: &reqwest::Client, access_token: &str) -> Option<ProfileInfo> {
+    let v: serde_json::Value = http
+        .get("https://openidconnect.googleapis.com/v1/userinfo")
+        .bearer_auth(access_token)
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    let name = v["name"].as_str().unwrap_or_default().to_string();
+    let mut picture = None;
+    if let Some(url) = v["picture"].as_str() {
+        if let Ok(resp) = http.get(url).send().await {
+            let mime = resp
+                .headers()
+                .get("content-type")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("image/jpeg")
+                .to_string();
+            if let Ok(bytes) = resp.bytes().await {
+                if bytes.len() <= 1_000_000 {
+                    use base64::Engine;
+                    picture = Some(format!(
+                        "data:{mime};base64,{}",
+                        base64::engine::general_purpose::STANDARD.encode(&bytes)
+                    ));
+                }
+            }
+        }
+    }
+    Some(ProfileInfo { name, picture })
+}
+
+/// Calendar events for the side panel. Demo accounts get fixture events so
+/// the panel is demoable with zero credentials.
+#[tauri::command]
+async fn list_events(
+    state: State<'_, AppState>,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<Vec<CalendarEvent>, String> {
+    if end_ms <= start_ms || end_ms - start_ms > 62 * 24 * 3_600_000 {
+        return Err("invalid time range".into());
+    }
+    let active = {
+        let conn = state.db.lock().unwrap();
+        store::active_account(&conn)
+    };
+    if active.provider != "gmail" {
+        return Ok(mail::mock::demo_events(start_ms, end_ms));
+    }
+    let mut sessions = state.gmail.lock().await;
+    let session = sessions
+        .get_mut(&active.email)
+        .ok_or("account not connected")?;
+    mail::calendar::list_events(&state.http, session, start_ms, end_ms).await
+}
+
+#[tauri::command]
+fn get_profile(state: State<'_, AppState>, email: String) -> Option<ProfileInfo> {
+    store::get_json(&state.db.lock().unwrap(), &format!("profile:{email}"))
+}
+
+/// Override (or clear) the header photo. Accepts a data: URI.
+#[tauri::command]
+fn set_profile_photo(
+    state: State<'_, AppState>,
+    email: String,
+    picture: Option<String>,
+) -> Result<(), String> {
+    if let Some(p) = &picture {
+        if !p.starts_with("data:image/") || p.len() > 2_000_000 {
+            return Err("that does not look like a reasonable image".into());
+        }
+    }
+    let conn = state.db.lock().unwrap();
+    let key = format!("profile:{email}");
+    let mut prof: ProfileInfo = store::get_json(&conn, &key).unwrap_or_default();
+    prof.picture = picture;
+    store::set_json(&conn, &key, &prof)
+}
+
+/// New-mail notifications: anything unread that landed in an inbox after the
+/// watermark. Skipped while the window is focused or when disabled.
+fn notify_new_mail(app: &AppHandle, since_ms: i64) {
+    let state = app.state::<AppState>();
+    let (enabled, rows) = {
+        let conn = state.db.lock().unwrap();
+        let settings = store::get_settings(&conn);
+        let rows: Vec<(String, String)> = conn
+            .prepare(
+                "SELECT participants, subject FROM threads
+                 WHERE unread = 1 AND in_inbox = 1 AND hidden IS NULL AND last_date > ?1
+                 ORDER BY last_date DESC LIMIT 4",
+            )
+            .and_then(|mut st| {
+                st.query_map([since_ms], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .map(|it| it.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+        (settings.notifications, rows)
+    };
+    if !enabled || rows.is_empty() {
+        return;
+    }
+    let focused = app
+        .get_webview_window("main")
+        .map(|w| w.is_focused().unwrap_or(false))
+        .unwrap_or(false);
+    if focused {
+        return;
+    }
+    use tauri_plugin_notification::NotificationExt;
+    for (participants, subject) in rows.iter().take(3) {
+        let sender = serde_json::from_str::<Vec<String>>(participants)
+            .ok()
+            .and_then(|p| p.last().cloned())
+            .unwrap_or_default();
+        let sender = sender.split('<').next().unwrap_or("New mail").trim().to_string();
+        let _ = app
+            .notification()
+            .builder()
+            .title(if sender.is_empty() { "New mail" } else { &sender })
+            .body(subject)
+            .show();
+    }
+    if rows.len() > 3 {
+        let _ = app
+            .notification()
+            .builder()
+            .title("ZenBox Mail")
+            .body("…and more new mail")
+            .show();
+    }
 }
 
 fn sync_in_background(app: AppHandle) {
@@ -1067,6 +1223,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
@@ -1205,6 +1363,8 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut tick: u64 = 0;
+                // only mail that arrives after boot notifies — no backlog blast
+                let mut notify_watermark = now_ms();
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                     tick += 1;
@@ -1244,6 +1404,8 @@ pub fn run() {
                     }
                     if changed {
                         let _ = handle.emit("mail:updated", ());
+                        notify_new_mail(&handle, notify_watermark);
+                        notify_watermark = now_ms();
                     }
                 }
             });
@@ -1281,6 +1443,9 @@ pub fn run() {
             save_draft,
             list_drafts,
             delete_draft,
+            get_profile,
+            set_profile_photo,
+            list_events,
             get_settings,
             save_settings,
             get_knowledge_base,

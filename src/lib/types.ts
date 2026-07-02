@@ -99,8 +99,32 @@ export interface Settings {
   providers: AiProviderConfig[];
   celebrationDir: string | null; // user-supplied folder of images; null = bundled
   shortcuts: Record<string, string>; // commandId -> key expression
-  signatures: Record<string, string>; // account email -> signature text
+  signatures: Record<string, string>; // account email -> signature text or HTML
   theme: "dark" | "light";
+  /** Desktop notifications for new mail (while the window is unfocused). */
+  notifications: boolean;
+  /** Welcome flow completed. */
+  onboarded: boolean;
+  /** Calendar side panel visible. */
+  calendarOpen: boolean;
+}
+
+/** Connected-account profile shown in the header (picture is a data: URI). */
+export interface ProfileInfo {
+  name: string;
+  picture: string | null;
+}
+
+/** One event in the calendar side panel. */
+export interface CalendarEvent {
+  id: string;
+  calendar: string;
+  color: string | null;
+  title: string;
+  startMs: number;
+  endMs: number;
+  allDay: boolean;
+  location: string | null;
 }
 
 export interface UnsubResult {

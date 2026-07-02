@@ -7,6 +7,49 @@ use rusqlite::Connection;
 const H: i64 = 3_600_000;
 const D: i64 = 24 * H;
 
+/// Fixture events for the calendar side panel in demo mode: a plausible
+/// founder's day, repeated for every day in the requested range.
+pub fn demo_events(start_ms: i64, end_ms: i64) -> Vec<CalendarEvent> {
+    let day_blocks: [(f64, f64, &str, Option<&str>); 5] = [
+        (7.0, 8.0, "Workout", None),
+        (8.5, 9.75, "Deep work — LP letter", None),
+        (10.0, 11.5, "Helios Board Meeting", Some("Zoom")),
+        (12.5, 13.25, "Lunch", None),
+        (14.0, 14.75, "Fieldstone intro call", Some("Meet")),
+    ];
+    let mut events = vec![];
+    // walk local midnights across the range
+    let mut day_start = {
+        let dt = chrono::DateTime::from_timestamp_millis(start_ms).unwrap_or_else(chrono::Utc::now);
+        let local = dt.with_timezone(&chrono::Local).date_naive();
+        local
+            .and_hms_opt(0, 0, 0)
+            .and_then(|t| t.and_local_timezone(chrono::Local).single())
+            .map(|t| t.timestamp_millis())
+            .unwrap_or(start_ms)
+    };
+    while day_start < end_ms {
+        for (i, (from_h, to_h, title, location)) in day_blocks.iter().enumerate() {
+            let s = day_start + (from_h * H as f64) as i64;
+            let e = day_start + (to_h * H as f64) as i64;
+            if e > start_ms && s < end_ms {
+                events.push(CalendarEvent {
+                    id: format!("demo-{day_start}-{i}"),
+                    calendar: "Demo".into(),
+                    color: None,
+                    title: (*title).into(),
+                    start_ms: s,
+                    end_ms: e,
+                    all_day: false,
+                    location: location.map(str::to_string),
+                });
+            }
+        }
+        day_start += D;
+    }
+    events
+}
+
 struct SeedMsg {
     from: &'static str,
     from_name: &'static str,

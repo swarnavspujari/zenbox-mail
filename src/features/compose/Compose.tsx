@@ -6,6 +6,7 @@ import { pushUndo } from "@/lib/undo";
 import { useMail } from "@/stores/mail";
 import { useSettings } from "@/stores/settings";
 import { outgoingFromCompose, useUi } from "@/stores/ui";
+import { sanitizeUserHtml } from "@/lib/sanitize";
 import type { MailAttachment } from "@/lib/types";
 
 const UNDO_SEND_MS = 10_000;
@@ -340,14 +341,22 @@ export function Compose() {
           </div>
         )}
 
-        {compose.signature && (
-          <div
-            className="whitespace-pre-wrap border-t border-line px-4 py-2 text-[12.5px] leading-relaxed text-ink-2"
-            title="Signature — set per account in Settings → Account"
-          >
-            {compose.signature}
-          </div>
-        )}
+        {compose.signature &&
+          (/<\w+[^>]*>/.test(compose.signature) ? (
+            <div
+              className="selectable max-h-36 overflow-y-auto rounded-b-none border-t border-line bg-white px-4 py-2 text-[12.5px] leading-relaxed text-neutral-800"
+              title="Signature — set per account in Settings → Account"
+              // user-authored, sanitized again at render as defense in depth
+              dangerouslySetInnerHTML={{ __html: sanitizeUserHtml(compose.signature) }}
+            />
+          ) : (
+            <div
+              className="whitespace-pre-wrap border-t border-line px-4 py-2 text-[12.5px] leading-relaxed text-ink-2"
+              title="Signature — set per account in Settings → Account"
+            >
+              {compose.signature}
+            </div>
+          ))}
 
         {compose.quote && (
           <div className="max-h-28 overflow-y-auto border-t border-line px-4 py-2 text-[12px] leading-relaxed text-ink-3">

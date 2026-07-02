@@ -85,8 +85,10 @@ function HtmlBody({ html, showQuote }: { html: string; showQuote: boolean }) {
     const wire = () => {
       const doc = iframe.contentDocument;
       if (!doc?.body) return;
+      // body.scrollHeight, not documentElement's — the latter never reports
+      // smaller than the iframe viewport, so heights would only ratchet up
       const measure = () =>
-        setHeight(Math.min(4000, Math.max(40, doc.documentElement.scrollHeight)));
+        setHeight(Math.min(20_000, Math.max(40, doc.body.scrollHeight)));
       measure();
       ro = new ResizeObserver(measure);
       ro.observe(doc.body);

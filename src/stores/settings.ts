@@ -6,6 +6,7 @@ import type {
   AccountsState,
   AiProviderId,
   KnowledgeBase,
+  ProfileInfo,
   Settings,
   Streaks,
 } from "@/lib/types";
@@ -71,6 +72,30 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   reorderAccounts: async (emails) => {
     set({ accounts: await backend.reorderAccounts(emails) });
+  },
+}));
+
+/** Cached account profiles (name + photo) for the header and settings. */
+interface ProfilesState {
+  profiles: Record<string, ProfileInfo>;
+  loadFor: (email: string) => Promise<void>;
+  setPhoto: (email: string, picture: string | null) => Promise<void>;
+}
+
+export const useProfiles = create<ProfilesState>((set, get) => ({
+  profiles: {},
+  loadFor: async (email) => {
+    if (get().profiles[email]) return;
+    const p = await backend.getProfile(email).catch(() => null);
+    if (p) set((s) => ({ profiles: { ...s.profiles, [email]: p } }));
+  },
+  setPhoto: async (email, picture) => {
+    await backend.setProfilePhoto(email, picture);
+    const p = (await backend.getProfile(email).catch(() => null)) ?? {
+      name: email,
+      picture,
+    };
+    set((s) => ({ profiles: { ...s.profiles, [email]: p } }));
   },
 }));
 

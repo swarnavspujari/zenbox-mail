@@ -4,8 +4,9 @@ import { commandBindings } from "@/lib/commands";
 import { installKeyboard } from "@/lib/keyboard";
 import { startUpdateChecks, useUpdater } from "@/lib/updater";
 import { useMail } from "@/stores/mail";
-import { useSettings } from "@/stores/settings";
+import { useProfiles, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
+import { Avatar } from "@/components/Avatar";
 import { MailScreen } from "@/features/inbox/MailScreen";
 import { ThreadView } from "@/features/thread/ThreadView";
 import { Compose } from "@/features/compose/Compose";
@@ -20,6 +21,23 @@ import { Celebration } from "@/features/zero/Celebration";
 import { SearchScreen } from "@/features/search/SearchScreen";
 import { SettingsScreen } from "@/features/settings/SettingsScreen";
 import { AskAi } from "@/features/thread/AskAi";
+import { Onboarding } from "@/features/onboarding/Onboarding";
+
+function ActiveAvatar({ email }: { email: string }) {
+  const profile = useProfiles((s) => s.profiles[email]);
+  useEffect(() => {
+    if (email) void useProfiles.getState().loadFor(email);
+  }, [email]);
+  if (!email) return null;
+  return (
+    <Avatar
+      name={profile?.name ?? email}
+      email={email}
+      src={profile?.picture}
+      size={22}
+    />
+  );
+}
 
 export default function App() {
   const screen = useUi((s) => s.screen);
@@ -32,6 +50,7 @@ export default function App() {
   const openThreadId = useMail((s) => s.openThreadId);
   const updateReady = useUpdater((s) => s.ready);
   const loaded = useSettings((s) => s.loaded);
+  const onboarded = useSettings((s) => s.settings.onboarded);
   const accounts = useSettings((s) => s.accounts);
   const theme = useSettings((s) => s.settings.theme);
 
@@ -67,6 +86,14 @@ export default function App() {
     );
   }
 
+  if (!onboarded) {
+    return (
+      <div className="relative h-full bg-base">
+        <Onboarding />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full flex-col bg-base">
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
@@ -79,6 +106,7 @@ export default function App() {
           </span>
         )}
         <div className="flex-1" />
+        <ActiveAvatar email={accounts.active} />
         {accounts.accounts.length > 1 ? (
           <select
             value={accounts.active}

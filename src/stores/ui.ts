@@ -22,6 +22,24 @@ export interface ComposeState {
   draftId: number | null;
 }
 
+export function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (ch) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!
+  );
+}
+
+/** True when a signature is rich HTML (images, formatting) vs plain text. */
+export function isHtmlSignature(sig: string): boolean {
+  return /<\w+[^>]*>/.test(sig);
+}
+
+function htmlToText(html: string): string {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return (doc.body.textContent ?? "").trim();
+}
+
 /** The one place a compose window turns into an outgoing message. */
 export function outgoingFromCompose(c: ComposeState): OutgoingMail {
   const split = (raw: string) =>
@@ -29,17 +47,34 @@ export function outgoingFromCompose(c: ComposeState): OutgoingMail {
       .split(/[,;]/)
       .map((s) => s.trim())
       .filter(Boolean);
-  const bodyText = [c.body, c.signature, c.quote]
-    .map((s) => s.trim())
+  const sigHtml = isHtmlSignature(c.signature);
+  const sigText = sigHtml ? htmlToText(c.signature) : c.signature.trim();
+  const bodyText = [c.body.trim(), sigText, c.quote.trim()]
     .filter(Boolean)
     .join("\n\n");
+
+  // Rich signatures ride an HTML alternative; plain-text-only mail stays
+  // plain so nothing changes for people without a fancy signature.
+  let bodyHtml: string | null = null;
+  if (sigHtml) {
+    const esc = (t: string) => escapeHtml(t).replace(/\n/g, "<br>");
+    const parts = [`<div>${esc(c.body.trim())}</div>`];
+    parts.push(`<div>-- <br>${c.signature}</div>`);
+    if (c.quote.trim()) {
+      parts.push(
+        `<blockquote style="margin:8px 0 0 8px;padding-left:12px;border-left:2px solid #ccc;color:#666">${esc(c.quote.trim())}</blockquote>`
+      );
+    }
+    bodyHtml = parts.join("<br>");
+  }
+
   return {
     threadId: c.threadId,
     to: split(c.to),
     cc: split(c.cc),
     subject: c.subject || "(no subject)",
     bodyText,
-    bodyHtml: null,
+    bodyHtml,
     replyAll: c.mode === "replyAll",
     attachments: c.attachments,
   };

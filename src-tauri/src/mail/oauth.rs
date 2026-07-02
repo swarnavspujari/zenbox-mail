@@ -12,7 +12,9 @@ const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 // gmail.modify: read + send + archive/label, but NOT permanent delete or
 // account-level settings — the least privilege that covers the feature set.
-const SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify";
+// openid/email/profile give the account photo; calendar.readonly feeds the
+// calendar side panel. Requested together so users consent exactly once.
+const SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify openid email profile https://www.googleapis.com/auth/calendar.readonly";
 
 #[derive(Deserialize)]
 struct TokenResponse {

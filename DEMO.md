@@ -16,7 +16,7 @@ npm run app:dev
 
 ## 0.5 The v0.3 triage loop (90s, no credentials)
 
-1. `Ctrl+2` — switch to the angel@ demo account; `Ctrl+1` back.
+1. `Alt+2` — switch to the angel@ demo account; `Alt+1` back.
 2. `S` star a thread → `G` `S` — it's in Starred.
 3. `#` trash a thread → **`Z`** — it's back. `!` spam → `Z` again.
 4. `M` mutes a thread (archives + will auto-archive future replies).

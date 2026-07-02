@@ -103,7 +103,7 @@ impl GmailSession {
         Ok(tok)
     }
 
-    async fn get_json(&mut self, http: &reqwest::Client, url: &str) -> Result<Value, String> {
+    pub(crate) async fn get_json(&mut self, http: &reqwest::Client, url: &str) -> Result<Value, String> {
         let tok = self.token(http).await?;
         for attempt in 0..3u32 {
             let resp = http

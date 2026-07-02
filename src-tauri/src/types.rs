@@ -88,10 +88,45 @@ pub struct Settings {
     /// "dark" (default) or "light"
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Desktop notifications for new mail (while the window is unfocused).
+    #[serde(default = "default_true")]
+    pub notifications: bool,
+    /// Onboarding completed — the welcome flow shows until this flips.
+    #[serde(default)]
+    pub onboarded: bool,
+    /// Calendar side panel visible.
+    #[serde(default)]
+    pub calendar_open: bool,
 }
 
 fn default_theme() -> String {
     "dark".into()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Connected-account profile shown in the header (photo is a data: URI).
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileInfo {
+    pub name: String,
+    pub picture: Option<String>,
+}
+
+/// One event in the calendar side panel.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarEvent {
+    pub id: String,
+    pub calendar: String,
+    pub color: Option<String>,
+    pub title: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub all_day: bool,
+    pub location: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

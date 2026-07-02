@@ -77,15 +77,16 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "inbox.zeroSweep": "",
   "sync.now": "",
   "settings.open": "mod+,",
-  "account.1": "mod+1",
-  "account.2": "mod+2",
-  "account.3": "mod+3",
-  "account.4": "mod+4",
-  "account.5": "mod+5",
-  "account.6": "mod+6",
-  "account.7": "mod+7",
-  "account.8": "mod+8",
-  "account.9": "mod+9",
+  // Alt+N (was mod+N through v0.5) — keeps Ctrl+N for browser muscle memory
+  "account.1": "alt+1",
+  "account.2": "alt+2",
+  "account.3": "alt+3",
+  "account.4": "alt+4",
+  "account.5": "alt+5",
+  "account.6": "alt+6",
+  "account.7": "alt+7",
+  "account.8": "alt+8",
+  "account.9": "alt+9",
 };
 
 export function defaultSettings(): Settings {
@@ -120,6 +121,9 @@ export function defaultSettings(): Settings {
     shortcuts: { ...DEFAULT_SHORTCUTS },
     signatures: {},
     theme: "dark",
+    notifications: true,
+    onboarded: false,
+    calendarOpen: false,
   };
 }
 

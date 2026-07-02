@@ -6,8 +6,10 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AccountsState,
   AiProviderId,
+  CalendarEvent,
   DraftEntry,
   DraftRequest,
+  ProfileInfo,
   KnowledgeBase,
   Message,
   OutgoingMail,
@@ -78,6 +80,13 @@ export interface Backend {
   saveDraft(draftId: number | null, payload: string): Promise<number>;
   listDrafts(): Promise<DraftEntry[]>;
   deleteDraft(draftId: number): Promise<void>;
+
+  /** Cached name + photo for a connected account (null in demo mode). */
+  getProfile(email: string): Promise<ProfileInfo | null>;
+  /** Override (or clear with null) the header photo. data: URI expected. */
+  setProfilePhoto(email: string, picture: string | null): Promise<void>;
+  /** Calendar events for the side panel, [startMs, endMs). */
+  listEvents(startMs: number, endMs: number): Promise<CalendarEvent[]>;
 
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
@@ -196,6 +205,15 @@ class TauriBackend implements Backend {
   }
   deleteDraft(draftId: number) {
     return invoke<void>("delete_draft", { draftId });
+  }
+  getProfile(email: string) {
+    return invoke<ProfileInfo | null>("get_profile", { email });
+  }
+  setProfilePhoto(email: string, picture: string | null) {
+    return invoke<void>("set_profile_photo", { email, picture });
+  }
+  listEvents(startMs: number, endMs: number) {
+    return invoke<CalendarEvent[]>("list_events", { startMs, endMs });
   }
   getSettings() {
     return invoke<Settings>("get_settings");

@@ -9,7 +9,7 @@ Aligned with **Superhuman v7 (Windows & Linux edition)**. `mod` = `Ctrl` on Wind
 | `Ctrl+K` | Command palette (toggle) |
 | `C` | Compose new email |
 | `/` | Search |
-| `Ctrl+1` … `Ctrl+9` | **Switch account** (slot = order in Settings → Account; reorder to reassign) |
+| `Alt+1` … `Alt+9` | **Switch account** (slot = order in Settings → Account; reorder to reassign) |
 | `Esc` | Back / close (palette → picker → AI bar → compose → thread → screen) |
 | `Ctrl+,` | Settings |
 
@@ -82,7 +82,7 @@ Launch `npm run app:dev`, then:
 5. [ ] `H` → "In 30 seconds (demo)"; thread appears in Reminders (`G`,`H`) and returns to inbox ~30s later, unread
 6. [ ] `S` stars/unstars; `#` trashes; `U` toggles read state
 7. [ ] `Tab`/`Shift+Tab` cycle splits; `G`,`O` jumps to Other; Calendar split contains the invites
-8. [ ] **`Ctrl+2` switches to the second account (angel@ in demo); `Ctrl+1` back; header dropdown matches**
+8. [ ] **`Alt+2` switches to the second account (angel@ in demo); `Alt+1` back; header dropdown matches**
 9. [ ] Settings → Splits → create a custom split — a new tab appears with matching threads
 10. [ ] `R` replies, `A` reply-alls (recipients correct); `Ctrl+Enter` sends; `Ctrl+Shift+Enter` sends & archives
 11. [ ] Settings → Account → set a signature → compose shows it; sent mail includes it

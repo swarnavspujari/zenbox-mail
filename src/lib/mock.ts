@@ -10,11 +10,13 @@ import type {
 import type {
   AccountsState,
   AiProviderId,
+  CalendarEvent,
   DraftEntry,
   DraftRequest,
   KnowledgeBase,
   Message,
   OutgoingMail,
+  ProfileInfo,
   SearchResult,
   Settings,
   Streaks,
@@ -43,6 +45,7 @@ interface PersistedState {
   outboxSeq: number;
   drafts: DraftEntry[];
   draftSeq: number;
+  profiles?: Record<string, ProfileInfo>;
   settings: Settings;
   kb: KnowledgeBase;
   streaks: Streaks;
@@ -77,6 +80,12 @@ function loadPersisted(): PersistedState {
         ...fresh.settings.shortcuts,
         ...merged.settings.shortcuts,
       };
+      // v0.6: account switching moved mod+N → alt+N (custom remaps survive)
+      for (let n = 1; n <= 9; n++) {
+        if (merged.settings.shortcuts[`account.${n}`] === `mod+${n}`) {
+          merged.settings.shortcuts[`account.${n}`] = `alt+${n}`;
+        }
+      }
       return merged;
     }
   } catch {
@@ -469,6 +478,52 @@ export class MockBackend implements Backend {
   async deleteDraft(draftId: number): Promise<void> {
     this.state.drafts = this.state.drafts.filter((d) => d.id !== draftId);
     this.persist();
+  }
+
+  async getProfile(email: string): Promise<ProfileInfo | null> {
+    return this.state.profiles?.[email] ?? null;
+  }
+
+  async setProfilePhoto(email: string, picture: string | null): Promise<void> {
+    if (!this.state.profiles) this.state.profiles = {};
+    const prof = this.state.profiles[email] ?? { name: email.split("@")[0], picture: null };
+    this.state.profiles[email] = { ...prof, picture };
+    this.persist();
+  }
+
+  /** Mirror of src-tauri/src/mail/mock.rs demo_events — keep in sync. */
+  async listEvents(startMs: number, endMs: number): Promise<CalendarEvent[]> {
+    const H = 3600_000;
+    const D = 24 * H;
+    const blocks: Array<[number, number, string, string | null]> = [
+      [7, 8, "Workout", null],
+      [8.5, 9.75, "Deep work — LP letter", null],
+      [10, 11.5, "Helios Board Meeting", "Zoom"],
+      [12.5, 13.25, "Lunch", null],
+      [14, 14.75, "Fieldstone intro call", "Meet"],
+    ];
+    const events: CalendarEvent[] = [];
+    let dayStart = new Date(startMs).setHours(0, 0, 0, 0);
+    while (dayStart < endMs) {
+      blocks.forEach(([from, to, title, location], i) => {
+        const s = dayStart + from * H;
+        const e = dayStart + to * H;
+        if (e > startMs && s < endMs) {
+          events.push({
+            id: `demo-${dayStart}-${i}`,
+            calendar: "Demo",
+            color: null,
+            title,
+            startMs: s,
+            endMs: e,
+            allDay: false,
+            location,
+          });
+        }
+      });
+      dayStart += D;
+    }
+    return events;
   }
 
   async getSettings() {

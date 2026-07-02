@@ -3,8 +3,10 @@ import { backend, isTauri } from "@/lib/ipc";
 import { formatKeyExpr } from "@/lib/keyboard";
 import { allCommands } from "@/lib/commands";
 import { useMail } from "@/stores/mail";
-import { useSettings } from "@/stores/settings";
+import { useProfiles, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
+import { Avatar } from "@/components/Avatar";
+import { SignatureEditor } from "./SignatureEditor";
 import type {
   AiProviderId,
   Split,
@@ -48,6 +50,59 @@ function Section({
 }
 
 // ---------------------------------------------------------------- Account
+
+/** Header avatar with an override: click to pick a new photo, × resets to
+ *  the Google one (or the monogram). */
+function ProfilePhoto({ email }: { email: string }) {
+  const profile = useProfiles((s) => s.profiles[email]);
+  const [hover, setHover] = useState(false);
+
+  useEffect(() => {
+    void useProfiles.getState().loadFor(email);
+  }, [email]);
+
+  const pick = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => {
+      const f = input.files?.[0];
+      if (!f || f.size > 1_000_000) {
+        if (f) window.alert("Keep the photo under 1 MB.");
+        return;
+      }
+      const r = new FileReader();
+      r.onload = () =>
+        void useProfiles.getState().setPhoto(email, String(r.result));
+      r.readAsDataURL(f);
+    };
+    input.click();
+  };
+
+  return (
+    <span
+      className="relative cursor-pointer"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onClick={pick}
+      title="Click to change the photo"
+    >
+      <Avatar name={profile?.name ?? email} email={email} src={profile?.picture} size={28} />
+      {hover && profile?.picture && (
+        <button
+          className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-overlay text-[10px] text-ink-2 shadow"
+          onClick={(e) => {
+            e.stopPropagation();
+            void useProfiles.getState().setPhoto(email, null);
+          }}
+          title="Remove custom photo"
+        >
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
 
 function AccountTab() {
   const accounts = useSettings((s) => s.accounts);
@@ -100,7 +155,7 @@ function AccountTab() {
     <>
       <Section
         title="Accounts"
-        hint="Slot number = Ctrl+1…9 to switch instantly. Reorder to reassign slots. Each account gets its own signature."
+        hint="Slot number = Alt+1…9 to switch instantly. Reorder to reassign slots. Each account gets its own signature."
       >
         <div className="space-y-3">
           {accounts.accounts.map((a, i) => {
@@ -112,7 +167,8 @@ function AccountTab() {
             return (
               <div key={a.email} className="rounded-lg border border-line bg-surface p-3">
                 <div className="flex items-center gap-3">
-                  <span className="kbd">Ctrl+{i + 1}</span>
+                  <span className="kbd">Alt+{i + 1}</span>
+                  <ProfilePhoto email={a.email} />
                   <div className={`h-2 w-2 rounded-full ${a.connected ? "bg-ok" : "bg-warn"}`} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[13px] text-ink">
@@ -165,12 +221,10 @@ function AccountTab() {
                   )}
                 </div>
                 <div className="mt-2">
-                  <textarea
-                    className={`${inputCls} min-h-14 resize-y`}
-                    placeholder={"Signature for this account, e.g.\nSwarnav S Pujari\nPujari Venture Partners"}
+                  <SignatureEditor
                     value={sig}
-                    onChange={(e) =>
-                      setSigDrafts((d) => ({ ...d, [a.email]: e.target.value }))
+                    onChange={(html) =>
+                      setSigDrafts((d) => ({ ...d, [a.email]: html }))
                     }
                   />
                   {sigDirty && (
@@ -786,31 +840,67 @@ function CelebrationTab() {
 
 function AppearanceTab() {
   const theme = useSettings((s) => s.settings.theme);
+  const notifications = useSettings((s) => s.settings.notifications);
+  const onboarded = useSettings((s) => s.settings.onboarded);
   return (
-    <Section
-      title="Theme"
-      hint="Dark is the default and follows Superhuman's dark-theme principles. Light is tuned for perceptual contrast, not just inverted."
-    >
-      <div className="flex gap-3">
-        {(["dark", "light"] as const).map((t) => (
-          <label
-            key={t}
-            className={`flex flex-1 cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 ${
-              theme === t ? "border-accent bg-accent-dim" : "border-line bg-surface"
-            }`}
-          >
-            <input
-              type="radio"
-              name="theme"
-              checked={theme === t}
-              onChange={() => void useSettings.getState().save({ theme: t })}
-              className="accent-[#6d7ff2]"
-            />
-            <span className="text-[13px] capitalize text-ink">{t}</span>
-          </label>
-        ))}
-      </div>
-    </Section>
+    <>
+      <Section
+        title="Theme"
+        hint="Dark is the default and follows Superhuman's dark-theme principles. Light is tuned for perceptual contrast, not just inverted."
+      >
+        <div className="flex gap-3">
+          {(["dark", "light"] as const).map((t) => (
+            <label
+              key={t}
+              className={`flex flex-1 cursor-pointer items-center gap-3 rounded-lg border px-4 py-3 ${
+                theme === t ? "border-accent bg-accent-dim" : "border-line bg-surface"
+              }`}
+            >
+              <input
+                type="radio"
+                name="theme"
+                checked={theme === t}
+                onChange={() => void useSettings.getState().save({ theme: t })}
+                className="accent-[#6d7ff2]"
+              />
+              <span className="text-[13px] capitalize text-ink">{t}</span>
+            </label>
+          ))}
+        </div>
+      </Section>
+
+      <Section
+        title="Notifications"
+        hint="New-mail notifications appear only while the ZenBox window is in the background."
+      >
+        <label className="flex cursor-pointer items-center gap-3">
+          <input
+            type="checkbox"
+            checked={notifications}
+            onChange={(e) =>
+              void useSettings.getState().save({ notifications: e.target.checked })
+            }
+            className="accent-[#6d7ff2]"
+          />
+          <span className="text-[13px] text-ink">Notify me about new mail</span>
+        </label>
+      </Section>
+
+      <Section
+        title="Welcome tour"
+        hint="Replay the first-run walkthrough (connect, AI, theme, shortcuts)."
+      >
+        <button
+          className={btnGhost}
+          onClick={() => {
+            void useSettings.getState().save({ onboarded: false });
+            useUi.getState().setScreen("mail");
+          }}
+        >
+          {onboarded ? "Show the welcome tour again" : "Tour will show on the mail screen"}
+        </button>
+      </Section>
+    </>
   );
 }
 

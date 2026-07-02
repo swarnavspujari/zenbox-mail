@@ -1,6 +1,6 @@
 [package]
 name = "zenbox-mail"
-version = "0.4.0"
+version = "0.6.0"
 description = "ZenBox Mail — keyboard-first, AI-native email client"
 authors = ["Swarnav S Pujari"]
 license = "MIT"
@@ -20,6 +20,8 @@ tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }

@@ -198,15 +198,18 @@ pub fn default_settings() -> Settings {
         ("inbox.zeroSweep", ""),
         ("sync.now", ""),
         ("settings.open", "mod+,"),
-        ("account.1", "mod+1"),
-        ("account.2", "mod+2"),
-        ("account.3", "mod+3"),
-        ("account.4", "mod+4"),
-        ("account.5", "mod+5"),
-        ("account.6", "mod+6"),
-        ("account.7", "mod+7"),
-        ("account.8", "mod+8"),
-        ("account.9", "mod+9"),
+        // Alt+N leaves Ctrl+N free for browser-muscle-memory shortcuts and
+        // matches the user's preference (v0.6 change; mod+N was the default
+        // through v0.5 — get_settings migrates saved copies).
+        ("account.1", "alt+1"),
+        ("account.2", "alt+2"),
+        ("account.3", "alt+3"),
+        ("account.4", "alt+4"),
+        ("account.5", "alt+5"),
+        ("account.6", "alt+6"),
+        ("account.7", "alt+7"),
+        ("account.8", "alt+8"),
+        ("account.9", "alt+9"),
     ] {
         shortcuts.insert(k.to_string(), v.to_string());
     }
@@ -271,6 +274,9 @@ pub fn default_settings() -> Settings {
         shortcuts,
         signatures: HashMap::new(),
         theme: "dark".into(),
+        notifications: true,
+        onboarded: false,
+        calendar_open: false,
     }
 }
 
@@ -284,6 +290,16 @@ pub fn get_settings(conn: &Connection) -> Settings {
         Some(mut s) => {
             for (k, v) in defaults.shortcuts {
                 s.shortcuts.entry(k).or_insert(v);
+            }
+            // v0.6: account switching moved mod+N → alt+N. Migrate saved
+            // copies that still hold the old default; custom remaps survive.
+            for n in 1..=9 {
+                let key = format!("account.{n}");
+                if let Some(v) = s.shortcuts.get_mut(&key) {
+                    if *v == format!("mod+{n}") {
+                        *v = format!("alt+{n}");
+                    }
+                }
             }
             for p in defaults.providers {
                 if !s.providers.iter().any(|x| x.id == p.id) {
