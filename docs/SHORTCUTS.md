@@ -75,13 +75,14 @@ Superhuman keys not yet mapped (their features land in later releases): `X` bulk
 
 Launch `npm run app:dev`, then:
 
+0. [ ] First run: the welcome flow appears (connect / demo → AI key → theme → tour); finishing it lands in the inbox and it stays gone after a restart
 1. [ ] App opens dark, inbox lists threads, split tabs show **total** counts
 2. [ ] `Ctrl+K` opens palette; typing filters; `Esc` closes; every row shows its key hint
 3. [ ] `J`/`K` move selection; `Enter` opens; `Esc` returns
 4. [ ] `E` archives (count drops, toast); thread appears under `G`,`E` (Done); `Shift+E` there returns it
 5. [ ] `H` → "In 30 seconds (demo)"; thread appears in Reminders (`G`,`H`) and returns to inbox ~30s later, unread
 6. [ ] `S` stars/unstars; `#` trashes; `U` toggles read state
-7. [ ] `Tab`/`Shift+Tab` cycle splits; `G`,`O` jumps to Other; Calendar split contains the invites
+7. [ ] `Tab`/`Shift+Tab` cycle splits; `G`,`O` jumps to Other; the **Calendar button** (top right) toggles the day panel with events
 8. [ ] **`Alt+2` switches to the second account (angel@ in demo); `Alt+1` back; header dropdown matches**
 9. [ ] Settings → Splits → create a custom split — a new tab appears with matching threads
 10. [ ] `R` replies, `A` reply-alls (recipients correct); `Ctrl+Enter` sends; `Ctrl+Shift+Enter` sends & archives
@@ -94,3 +95,6 @@ Launch `npm run app:dev`, then:
 17. [ ] Settings → AI Providers → **Test connection** OK for each configured provider
 18. [ ] Settings → Knowledge Base → add an instruction → next AI draft complies
 19. [ ] Settings → Shortcuts → remap Compose to `n` → `n` composes, `c` doesn't
+20. [ ] The StrictlyVC newsletter (Other) renders as rich HTML on a white card — table, links, no layout blowout; `•••` toggles quoted trails on threads that have them
+21. [ ] A 2+ message thread collapses older messages to one-line rows (click expands); attachment chips **open** and **save**; compose 📎 attaches a file that arrives on send
+22. [ ] Compose → type → `Esc` → "Draft saved"; `G`,`D` lists it; `Enter` resumes it; Discard deletes it

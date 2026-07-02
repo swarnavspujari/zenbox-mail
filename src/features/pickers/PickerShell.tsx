@@ -80,7 +80,7 @@ export function PickerShell({
         <div className="max-h-[46vh] overflow-y-auto py-1">
           {shown.map((item, i) => (
             <button
-              key={item.label}
+              key={`${i}-${item.label}`}
               onClick={() => {
                 useUi.getState().closePicker();
                 void item.run();
