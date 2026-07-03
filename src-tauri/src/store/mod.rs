@@ -194,6 +194,7 @@ pub fn default_settings() -> Settings {
         ("compose.snippet", "mod+;"),
         ("theme.toggle", ""),
         ("calendar.toggle", ""),
+        ("shortcutBar.toggle", ""),
         ("thread.cycleSuggestion", "tab"),
         ("back", "escape"),
         ("inbox.zeroSweep", ""),
@@ -269,6 +270,7 @@ pub fn default_settings() -> Settings {
         notifications: true,
         onboarded: false,
         calendar_open: false,
+        show_shortcut_bar: true,
     }
 }
 

@@ -97,6 +97,9 @@ pub struct Settings {
     /// Calendar side panel visible.
     #[serde(default)]
     pub calendar_open: bool,
+    /// Bottom shortcut-hint footer visible (default true, incl. older state).
+    #[serde(default = "default_true")]
+    pub show_shortcut_bar: bool,
 }
 
 fn default_theme() -> String {

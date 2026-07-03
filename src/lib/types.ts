@@ -107,6 +107,8 @@ export interface Settings {
   onboarded: boolean;
   /** Calendar side panel visible. */
   calendarOpen: boolean;
+  /** Bottom shortcut-hint footer visible (default true). */
+  showShortcutBar: boolean;
 }
 
 /** Connected-account profile shown in the header (picture is a data: URI). */

@@ -545,6 +545,15 @@ export function allCommands(): Command[] {
         void s.save({ calendarOpen: !s.settings.calendarOpen });
       },
     },
+    {
+      id: "shortcutBar.toggle",
+      title: "Toggle Shortcut Hints",
+      group: "General",
+      run: () => {
+        const s = useSettings.getState();
+        void s.save({ showShortcutBar: !s.settings.showShortcutBar });
+      },
+    },
     // Ctrl+1..9 — Superhuman-style account switching (slots are the order in
     // Settings → Account; reassign by reordering there).
     ...Array.from({ length: 9 }, (_, i) => {

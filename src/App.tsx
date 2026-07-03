@@ -53,6 +53,7 @@ export default function App() {
   const onboarded = useSettings((s) => s.settings.onboarded);
   const accounts = useSettings((s) => s.accounts);
   const theme = useSettings((s) => s.settings.theme);
+  const showShortcutBar = useSettings((s) => s.settings.showShortcutBar);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -198,26 +199,28 @@ export default function App() {
         )}
       </main>
 
-      <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line bg-surface px-4 text-[11px] text-ink-3">
-        <span>
-          <span className="kbd">Ctrl+K</span> commands
-        </span>
-        <span>
-          <span className="kbd">J</span>/<span className="kbd">K</span> navigate
-        </span>
-        <span>
-          <span className="kbd">E</span> done
-        </span>
-        <span>
-          <span className="kbd">C</span> compose
-        </span>
-        <span>
-          <span className="kbd">Tab</span> next split
-        </span>
-        <span>
-          <span className="kbd">?</span> ask AI
-        </span>
-      </footer>
+      {showShortcutBar && (
+        <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line bg-surface px-4 text-[11px] text-ink-3">
+          <span>
+            <span className="kbd">Ctrl+K</span> commands
+          </span>
+          <span>
+            <span className="kbd">J</span>/<span className="kbd">K</span> navigate
+          </span>
+          <span>
+            <span className="kbd">E</span> done
+          </span>
+          <span>
+            <span className="kbd">C</span> compose
+          </span>
+          <span>
+            <span className="kbd">Tab</span> next split
+          </span>
+          <span>
+            <span className="kbd">?</span> ask AI
+          </span>
+        </footer>
+      )}
     </div>
   );
 }

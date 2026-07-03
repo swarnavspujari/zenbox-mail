@@ -63,6 +63,7 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "compose.snippet": "mod+;",
   "theme.toggle": "",
   "calendar.toggle": "",
+  "shortcutBar.toggle": "",
   "thread.cycleSuggestion": "tab",
   back: "escape",
   "inbox.zeroSweep": "",
@@ -116,6 +117,7 @@ export function defaultSettings(): Settings {
     notifications: true,
     onboarded: false,
     calendarOpen: false,
+    showShortcutBar: true,
   };
 }
 
