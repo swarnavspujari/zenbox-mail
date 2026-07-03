@@ -345,7 +345,7 @@ fn sync_in_background(app: AppHandle) {
         let mut changed = false;
         let mut sessions = state.gmail.lock().await;
         for (email, session) in sessions.iter_mut() {
-            match mail::sync::full_sync(&state.http, session, &state.db, email).await {
+            match mail::sync::full_sync(&state.http, session, &state.db, email, false).await {
                 Ok(c) => changed |= c,
                 Err(e) => eprintln!("[sync:{email}] {e}"),
             }
@@ -365,7 +365,7 @@ async fn sync_now(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
     }
     let mut sessions = state.gmail.lock().await;
     for (email, session) in sessions.iter_mut() {
-        mail::sync::full_sync(&state.http, session, &state.db, email).await?;
+        mail::sync::full_sync(&state.http, session, &state.db, email, false).await?;
     }
     drop(sessions);
     let _ = app.emit("mail:updated", ());
@@ -391,7 +391,8 @@ async fn resync_account(app: AppHandle, state: State<'_, AppState>) -> Result<()
     }
     let mut sessions = state.gmail.lock().await;
     for (email, session) in sessions.iter_mut() {
-        mail::sync::full_sync(&state.http, session, &state.db, email).await?;
+        // force a full reconcile — every thread re-parsed, bodies healed
+        mail::sync::full_sync(&state.http, session, &state.db, email, true).await?;
     }
     drop(sessions);
     let _ = app.emit("mail:updated", ());
@@ -1530,7 +1531,29 @@ pub fn run() {
                 }
             });
 
-            // background loop: snooze wake-ups every 30s, Gmail sync every 60s
+            // one forced reconcile at startup: refreshes the inbox immediately on
+            // launch and sweeps any server-side removals missed while closed
+            let boot = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = boot.state::<AppState>();
+                let mut changed = false;
+                {
+                    let mut sessions = state.gmail.lock().await;
+                    for (email, session) in sessions.iter_mut() {
+                        if let Ok(c) =
+                            mail::sync::full_sync(&state.http, session, &state.db, email, true).await
+                        {
+                            changed |= c;
+                        }
+                    }
+                }
+                if changed {
+                    let _ = boot.emit("mail:updated", ());
+                }
+            });
+
+            // background loop: snooze wake-ups + Gmail sync every 30s, with a
+            // full reconcile every ~10 min as the inbox-removal safety net
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut tick: u64 = 0;
@@ -1563,13 +1586,15 @@ pub fn run() {
                                 }
                             }
                         }
-                        if tick % 2 == 0 {
-                            for (email, session) in sessions.iter_mut() {
-                                if let Ok(c) =
-                                    mail::sync::full_sync(&state.http, session, &state.db, email).await
-                                {
-                                    changed |= c;
-                                }
+                        // Sync every tick (30s) for responsive two-way sync; a
+                        // full reconcile every 20th tick (~10 min) sweeps inbox
+                        // removals the incremental path can miss.
+                        let force = tick % 20 == 0;
+                        for (email, session) in sessions.iter_mut() {
+                            if let Ok(c) =
+                                mail::sync::full_sync(&state.http, session, &state.db, email, force).await
+                            {
+                                changed |= c;
                             }
                         }
                     }

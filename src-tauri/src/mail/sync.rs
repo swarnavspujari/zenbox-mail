@@ -22,23 +22,32 @@ fn history_key(account_id: &str) -> String {
 }
 
 /// Sync one account. Returns true if anything changed (caller emits
-/// mail:updated).
+/// mail:updated). `force_reconcile` ignores the stored historyId and does a full
+/// listing pass — the periodic safety net that catches inbox removals the
+/// incremental path missed.
 pub async fn full_sync(
     http: &reqwest::Client,
     session: &mut GmailSession,
     db: &std::sync::Mutex<Connection>,
     account_id: &str,
+    force_reconcile: bool,
 ) -> Result<bool, String> {
     let key = history_key(account_id);
-    let start: Option<String> = {
+    let start: Option<String> = if force_reconcile {
+        None
+    } else {
         let conn = db.lock().unwrap();
         store::get_json(&conn, &key)
     };
     let mut changed = match start {
         Some(hid) => match incremental(http, session, db, account_id, &hid, &key).await {
             Ok(c) => c,
-            // expired historyId (Gmail keeps ~a week) → full reconcile
-            Err(e) if e.contains("(404") => reconcile(http, session, db, account_id, &key).await?,
+            // An expired historyId (Gmail keeps ~a week) returns 404; an invalid
+            // one returns 400. Either way reconcile from scratch instead of
+            // pinning a dead baseline and re-failing the same window forever.
+            Err(e) if e.contains("(404") || e.contains("(400") => {
+                reconcile(http, session, db, account_id, &key).await?
+            }
             Err(e) => return Err(e),
         },
         None => reconcile(http, session, db, account_id, &key).await?,
@@ -96,7 +105,14 @@ async fn incremental(
 
     let mut changed = false;
     for tid in &affected {
-        changed |= refetch_thread(http, session, db, account_id, tid).await?;
+        match refetch_thread(http, session, db, account_id, tid).await {
+            Ok(c) => changed |= c,
+            // One thread failing (rate-limit, transient network, an unexpected
+            // body) must NOT abort the loop — otherwise the advanced historyId
+            // below is never stored, pinning the account to a stale window that
+            // re-fails every cycle. Log it and keep going.
+            Err(e) => eprintln!("[sync:{account_id}] refetch {tid} failed: {e}"),
+        }
     }
     if latest != start_history_id {
         let conn = db.lock().unwrap();
@@ -155,8 +171,8 @@ async fn reconcile(
             .map(|t| t.id)
             .collect();
         for id in local_inbox {
-            // mock-era ids (t-…) are never reconciled against Gmail
-            if !id.starts_with("t-") && !inbox_ids.contains(id.as_str()) {
+            // mock-era ids (t-… / t2-…) are never reconciled against Gmail
+            if !id.starts_with("t-") && !id.starts_with("t2-") && !inbox_ids.contains(id.as_str()) {
                 store::set_in_inbox(&conn, &id, false)?;
                 changed = true;
             }
