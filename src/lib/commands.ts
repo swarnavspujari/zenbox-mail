@@ -638,10 +638,27 @@ export function allCommands(): Command[] {
   ];
 }
 
-/** Bindings for the keyboard engine, honoring user remaps from settings. */
+/** Bindings for the keyboard engine, honoring user remaps from settings.
+ *
+ * installKeyboard calls this on every keydown, so it's memoized: allCommands()
+ * builds ~45 command objects plus a 9-slot account block (each reading settings
+ * state), which is wasteful per keystroke. The cache is invalidated only when the
+ * shortcut map or account list actually changes. */
+let bindingsCache: Binding[] | null = null;
+
+useSettings.subscribe((state, prev) => {
+  if (
+    state.settings.shortcuts !== prev.settings.shortcuts ||
+    state.accounts.accounts !== prev.accounts.accounts
+  ) {
+    bindingsCache = null;
+  }
+});
+
 export function commandBindings(): Binding[] {
+  if (bindingsCache) return bindingsCache;
   const shortcuts = useSettings.getState().settings.shortcuts;
-  return allCommands()
+  bindingsCache = allCommands()
     .map((c) => ({
       expr: shortcuts[c.id] ?? "",
       run: () => void c.run(),
@@ -649,6 +666,7 @@ export function commandBindings(): Binding[] {
       bypassOverlays: c.id === "palette.open",
     }))
     .filter((b) => b.expr !== "");
+  return bindingsCache;
 }
 
 export function shortcutHint(commandId: string): string {

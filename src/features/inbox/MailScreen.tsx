@@ -21,13 +21,20 @@ function CalendarToggle() {
   const open = useSettings((s) => s.settings.calendarOpen);
   const [upcoming, setUpcoming] = useState<number | null>(null);
 
+  // Only hit Google when the panel is open — this component is always mounted,
+  // and an eager listEvents on every MailScreen mount was a per-navigation
+  // network round-trip (and a repeated failure when Calendar isn't configured).
   useEffect(() => {
+    if (!open) {
+      setUpcoming(null);
+      return;
+    }
     const dayStart = new Date().setHours(0, 0, 0, 0);
     backend
       .listEvents(dayStart, dayStart + 86_400_000)
       .then((ev) => setUpcoming(ev.filter((e) => e.endMs > Date.now()).length))
       .catch(() => setUpcoming(null));
-  }, []);
+  }, [open]);
 
   return (
     <button
@@ -102,8 +109,15 @@ function SplitTabs() {
   );
 }
 
-function Row({ t, index }: { t: Thread; index: number }) {
-  const selected = useMail((s) => s.selectedIndex === index);
+function Row({
+  t,
+  index,
+  selected,
+}: {
+  t: Thread;
+  index: number;
+  selected: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -172,6 +186,7 @@ export function MailScreen() {
   const reminders = useMail((s) => s.reminders);
   const starred = useMail((s) => s.starred);
   const activeSplitId = useMail((s) => s.activeSplitId);
+  const selectedIndex = useMail((s) => s.selectedIndex);
   const splits = useSettings((s) => s.settings.splits);
   const calendarOpen = useSettings((s) => s.settings.calendarOpen);
   const loaded = useMail((s) => s.loaded);
@@ -211,7 +226,7 @@ export function MailScreen() {
         )}
         <div className="min-h-0 flex-1 overflow-y-auto">
           {threads.map((t, i) => (
-            <Row key={t.id} t={t} index={i} />
+            <Row key={t.id} t={t} index={i} selected={i === selectedIndex} />
           ))}
           {loaded && threads.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-ink-3">

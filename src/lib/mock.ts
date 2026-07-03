@@ -648,6 +648,13 @@ export class MockBackend implements Backend {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
   }
+  // Demo fixtures carry real HTML + no remote images, so these never fire.
+  onThreadImages(): () => void {
+    return () => {};
+  }
+  onTriageError(): () => void {
+    return () => {};
+  }
 }
 
 /** First split (in settings order) whose rules match; empty-rule splits are

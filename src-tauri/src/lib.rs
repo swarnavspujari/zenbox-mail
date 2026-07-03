@@ -411,7 +411,11 @@ fn list_threads(state: State<'_, AppState>, view: String) -> Result<Vec<Thread>,
 }
 
 #[tauri::command]
-async fn get_thread(state: State<'_, AppState>, thread_id: String) -> Result<Vec<Message>, String> {
+async fn get_thread(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<Vec<Message>, String> {
     valid_id(&thread_id)?;
     let (mut msgs, account) = {
         let conn = state.db.lock().unwrap();
@@ -419,51 +423,100 @@ async fn get_thread(state: State<'_, AppState>, thread_id: String) -> Result<Vec
         store::set_unread(&conn, &thread_id, false)?;
         (msgs, store::account_of_thread(&conn, &thread_id))
     };
-    remote_modify(&state, &thread_id, &[], &["UNREAD"]).await.ok();
 
-    // Reading pane gets sanitized HTML only; raw bodies never reach the UI.
-    // cid: inline images resolve to data: URIs (fetched once, then cached).
+    // First paint is instant: sanitize using ONLY inline images already cached
+    // locally (no network). Raw bodies never reach the UI. The Gmail UNREAD
+    // removal and any un-cached inline-image fetches run in the background
+    // (spawn_thread_backfill), which re-emits so images fill in progressively.
     for m in msgs.iter_mut() {
         let Some(html) = m.body_html.clone() else { continue };
-        let mut cid_map = HashMap::new();
-        let inline = {
-            let conn = state.db.lock().unwrap();
-            store::inline_cids(&conn, &m.id)
-        };
-        for (att_id, content_id, mime, remote_id, has_data) in inline {
-            if !html.contains(&format!("cid:{content_id}")) {
-                continue;
-            }
-            let bytes = if has_data {
-                let conn = state.db.lock().unwrap();
-                store::attachment_data(&conn, &att_id)
-            } else if let (Some(remote), Some(acc)) = (remote_id.as_deref(), account.as_deref()) {
-                let mut sessions = state.gmail.lock().await;
-                if let Some(s) = sessions.get_mut(acc) {
-                    match s.get_attachment_bytes(&state.http, &m.id, remote).await {
-                        // inline images only; big blobs stay download-only
-                        Ok(b) if b.len() <= 2_000_000 => {
-                            let conn = state.db.lock().unwrap();
-                            let _ = store::set_attachment_data(&conn, &att_id, &b);
-                            Some(b)
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            if let Some(bytes) = bytes {
-                use base64::Engine;
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                cid_map.insert(content_id, format!("data:{mime};base64,{b64}"));
-            }
-        }
+        let cid_map = cached_cid_map(&state, &m.id, &html);
         m.body_html = Some(mail::render::sanitize_email_html(&html, &cid_map));
     }
+    spawn_thread_backfill(app, thread_id, account);
     Ok(msgs)
+}
+
+/// Build the cid→data: map for a message body from ALREADY-CACHED inline-image
+/// bytes only — no network, so the first paint of a thread is instant.
+fn cached_cid_map(state: &State<'_, AppState>, message_id: &str, html: &str) -> HashMap<String, String> {
+    use base64::Engine;
+    let mut cid_map = HashMap::new();
+    let inline = {
+        let conn = state.db.lock().unwrap();
+        store::inline_cids(&conn, message_id)
+    };
+    for (att_id, content_id, mime, _remote, has_data) in inline {
+        if !has_data || !html.contains(&format!("cid:{content_id}")) {
+            continue;
+        }
+        let bytes = {
+            let conn = state.db.lock().unwrap();
+            store::attachment_data(&conn, &att_id)
+        };
+        if let Some(bytes) = bytes {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            cid_map.insert(content_id, format!("data:{mime};base64,{b64}"));
+        }
+    }
+    cid_map
+}
+
+/// Background work for an opened thread: drop Gmail's UNREAD label and fetch any
+/// inline `cid:` images not yet cached (persisting them), then emit `thread:images`
+/// so the reading pane re-reads with images resolved. Keeps opening a thread from
+/// blocking on a Gmail round-trip or the sync-held gmail mutex.
+fn spawn_thread_backfill(app: AppHandle, thread_id: String, account: Option<String>) {
+    if is_mock_id(&thread_id) {
+        return;
+    }
+    let Some(account) = account else { return };
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        // 1. clear UNREAD on the server (best-effort; local already cleared)
+        {
+            let mut sessions = state.gmail.lock().await;
+            if let Some(s) = sessions.get_mut(&account) {
+                let _ = s.modify_thread(&state.http, &thread_id, &[], &["UNREAD"]).await;
+            }
+        }
+        // 2. fetch inline images still missing their bytes
+        let msgs = {
+            let conn = state.db.lock().unwrap();
+            store::get_messages(&conn, &thread_id).unwrap_or_default()
+        };
+        let mut fetched_any = false;
+        for m in &msgs {
+            let Some(html) = &m.body_html else { continue };
+            let inline = {
+                let conn = state.db.lock().unwrap();
+                store::inline_cids(&conn, &m.id)
+            };
+            for (att_id, content_id, _mime, remote_id, has_data) in inline {
+                if has_data || !html.contains(&format!("cid:{content_id}")) {
+                    continue;
+                }
+                let Some(remote) = remote_id else { continue };
+                let bytes = {
+                    let mut sessions = state.gmail.lock().await;
+                    match sessions.get_mut(&account) {
+                        Some(s) => s.get_attachment_bytes(&state.http, &m.id, &remote).await,
+                        None => Err("no session".to_string()),
+                    }
+                };
+                if let Ok(b) = bytes {
+                    if b.len() <= 2_000_000 {
+                        let conn = state.db.lock().unwrap();
+                        let _ = store::set_attachment_data(&conn, &att_id, &b);
+                        fetched_any = true;
+                    }
+                }
+            }
+        }
+        if fetched_any {
+            let _ = app.emit("thread:images", thread_id);
+        }
+    });
 }
 
 // ---------------------------------------------------------------- attachments
@@ -611,14 +664,27 @@ fn list_labels(state: State<'_, AppState>) -> Result<Vec<String>, String> {
 
 // ---------------------------------------------------------------- triage
 
-/// Apply a label change on the server that owns this thread (no-op for
-/// fixture threads and disconnected accounts).
-async fn remote_modify(
-    state: &State<'_, AppState>,
-    thread_id: &str,
-    add: &[&str],
-    remove: &[&str],
-) -> Result<(), String> {
+/// A pending Gmail-side triage change, applied in the background after the local
+/// store write. Label names (not ids) so user labels like "Muted" work alongside
+/// system labels (resolved via ensure_label_id, which returns system labels as-is).
+enum RemoteTriage {
+    Modify { add: Vec<String>, remove: Vec<String> },
+    Trash,
+    /// Untrash, then add these labels (restore from Trash → back to the inbox).
+    UntrashAdd(Vec<String>),
+}
+
+fn s(v: &str) -> String {
+    v.to_string()
+}
+
+/// Instant, non-blocking check that a triage action can reach Gmail: Ok for mock
+/// threads and real threads whose account has a live session; Err (before any
+/// local write) when a real thread's account has no live session, so the UI can't
+/// silently diverge from Gmail. Uses try_lock so a sync holding the gmail mutex
+/// never stalls triage — if we can't peek instantly we assume connected and let
+/// the background op surface any failure. (BUG 3a)
+fn ensure_remote_capable(state: &State<'_, AppState>, thread_id: &str) -> Result<(), String> {
     if is_mock_id(thread_id) {
         return Ok(());
     }
@@ -627,31 +693,98 @@ async fn remote_modify(
         store::account_of_thread(&conn, thread_id)
     };
     let Some(account) = account else { return Ok(()) };
-    let mut sessions = state.gmail.lock().await;
-    if let Some(s) = sessions.get_mut(&account) {
-        s.modify_thread(&state.http, thread_id, add, remove).await?;
+    if let Ok(sessions) = state.gmail.try_lock() {
+        if !sessions.contains_key(&account) {
+            return Err("account not connected — reconnect Gmail in Settings → Account, then try again".into());
+        }
     }
     Ok(())
 }
 
-#[tauri::command]
-async fn archive_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
-    valid_id(&thread_id)?;
-    remote_modify(&state, &thread_id, &[], &["INBOX"]).await?;
-    store::set_in_inbox(&state.db.lock().unwrap(), &thread_id, false)
+/// Apply a triage change on Gmail in the background so the command returns as soon
+/// as the local store write lands. On failure, surface it (never silent) and
+/// reconcile the affected thread so the optimistic local change is corrected
+/// rather than diverging. (BUG 2 #2 / BUG 3)
+fn spawn_remote(app: AppHandle, thread_id: String, op: RemoteTriage) {
+    if is_mock_id(&thread_id) {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let account = {
+            let conn = state.db.lock().unwrap();
+            store::account_of_thread(&conn, &thread_id)
+        };
+        let Some(account) = account else { return };
+        let result: Result<(), String> = async {
+            let mut sessions = state.gmail.lock().await;
+            let sess = sessions
+                .get_mut(&account)
+                .ok_or("account not connected — reconnect Gmail")?;
+            match &op {
+                RemoteTriage::Modify { add, remove } => {
+                    let mut add_ids = Vec::with_capacity(add.len());
+                    for name in add {
+                        add_ids.push(sess.ensure_label_id(&state.http, name).await?);
+                    }
+                    let mut rem_ids = Vec::with_capacity(remove.len());
+                    for name in remove {
+                        rem_ids.push(sess.ensure_label_id(&state.http, name).await?);
+                    }
+                    let add_refs: Vec<&str> = add_ids.iter().map(String::as_str).collect();
+                    let rem_refs: Vec<&str> = rem_ids.iter().map(String::as_str).collect();
+                    sess.modify_thread(&state.http, &thread_id, &add_refs, &rem_refs).await
+                }
+                RemoteTriage::Trash => sess.trash_thread(&state.http, &thread_id).await,
+                RemoteTriage::UntrashAdd(add) => {
+                    sess.untrash_thread(&state.http, &thread_id).await?;
+                    let mut add_ids = Vec::with_capacity(add.len());
+                    for name in add {
+                        add_ids.push(sess.ensure_label_id(&state.http, name).await?);
+                    }
+                    let add_refs: Vec<&str> = add_ids.iter().map(String::as_str).collect();
+                    sess.modify_thread(&state.http, &thread_id, &add_refs, &[]).await
+                }
+            }
+        }
+        .await;
+        if let Err(e) = result {
+            eprintln!("[triage:{account}] remote update failed: {e}");
+            let _ = app.emit("triage:error", format!("Couldn't sync to Gmail: {e}"));
+            // reconcile the thread so local state matches the server
+            let mut sessions = state.gmail.lock().await;
+            if let Some(sess) = sessions.get_mut(&account) {
+                let _ = mail::sync::refetch_thread(&state.http, sess, &state.db, &account, &thread_id).await;
+            }
+            drop(sessions);
+            let _ = app.emit("mail:updated", ());
+        }
+    });
 }
 
 #[tauri::command]
-async fn move_to_inbox(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+async fn archive_thread(app: AppHandle, state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     valid_id(&thread_id)?;
-    remote_modify(&state, &thread_id, &["INBOX"], &[]).await?;
-    store::set_in_inbox(&state.db.lock().unwrap(), &thread_id, true)
+    ensure_remote_capable(&state, &thread_id)?;
+    store::set_in_inbox(&state.db.lock().unwrap(), &thread_id, false)?;
+    spawn_remote(app, thread_id, RemoteTriage::Modify { add: vec![], remove: vec![s("INBOX")] });
+    Ok(())
+}
+
+#[tauri::command]
+async fn move_to_inbox(app: AppHandle, state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+    valid_id(&thread_id)?;
+    ensure_remote_capable(&state, &thread_id)?;
+    store::set_in_inbox(&state.db.lock().unwrap(), &thread_id, true)?;
+    spawn_remote(app, thread_id, RemoteTriage::Modify { add: vec![s("INBOX")], remove: vec![] });
+    Ok(())
 }
 
 /// Trash or spam a thread. Soft-hide locally (so Z can restore instantly);
-/// server-side it goes to Gmail's Trash / Spam.
+/// server-side it goes to Gmail's Trash / Spam (in the background).
 #[tauri::command]
 async fn hide_thread(
+    app: AppHandle,
     state: State<'_, AppState>,
     thread_id: String,
     reason: String,
@@ -660,85 +793,75 @@ async fn hide_thread(
     if !matches!(reason.as_str(), "trash" | "spam") {
         return Err("invalid reason".into());
     }
-    if !is_mock_id(&thread_id) {
-        let account = {
-            let conn = state.db.lock().unwrap();
-            store::account_of_thread(&conn, &thread_id)
-        };
-        if let Some(account) = account {
-            let mut sessions = state.gmail.lock().await;
-            if let Some(s) = sessions.get_mut(&account) {
-                if reason == "trash" {
-                    s.trash_thread(&state.http, &thread_id).await?;
-                } else {
-                    s.modify_thread(&state.http, &thread_id, &["SPAM"], &["INBOX"]).await?;
-                }
-            }
-        }
-    }
-    store::set_hidden(&state.db.lock().unwrap(), &thread_id, Some(&reason))
+    ensure_remote_capable(&state, &thread_id)?;
+    store::set_hidden(&state.db.lock().unwrap(), &thread_id, Some(&reason))?;
+    let op = if reason == "trash" {
+        RemoteTriage::Trash
+    } else {
+        RemoteTriage::Modify { add: vec![s("SPAM")], remove: vec![s("INBOX")] }
+    };
+    spawn_remote(app, thread_id, op);
+    Ok(())
 }
 
 /// Undo for hide_thread: untrash/unspam remotely, resurface locally.
 #[tauri::command]
-async fn restore_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+async fn restore_thread(app: AppHandle, state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     valid_id(&thread_id)?;
     let reason = store::hidden_reason(&state.db.lock().unwrap(), &thread_id);
-    if !is_mock_id(&thread_id) {
-        let account = {
-            let conn = state.db.lock().unwrap();
-            store::account_of_thread(&conn, &thread_id)
-        };
-        if let Some(account) = account {
-            let mut sessions = state.gmail.lock().await;
-            if let Some(s) = sessions.get_mut(&account) {
-                match reason.as_deref() {
-                    Some("trash") => {
-                        s.untrash_thread(&state.http, &thread_id).await?;
-                        s.modify_thread(&state.http, &thread_id, &["INBOX"], &[]).await?;
-                    }
-                    Some("spam") => {
-                        s.modify_thread(&state.http, &thread_id, &["INBOX"], &["SPAM"]).await?;
-                    }
-                    _ => {}
-                }
-            }
-        }
+    ensure_remote_capable(&state, &thread_id)?;
+    store::set_hidden(&state.db.lock().unwrap(), &thread_id, None)?;
+    match reason.as_deref() {
+        Some("trash") => spawn_remote(app, thread_id, RemoteTriage::UntrashAdd(vec![s("INBOX")])),
+        Some("spam") => spawn_remote(
+            app,
+            thread_id,
+            RemoteTriage::Modify { add: vec![s("INBOX")], remove: vec![s("SPAM")] },
+        ),
+        _ => {}
     }
-    store::set_hidden(&state.db.lock().unwrap(), &thread_id, None)
+    Ok(())
 }
 
 /// Mute: archive now and keep auto-archiving new replies (via the sync pass).
 #[tauri::command]
-async fn mute_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+async fn mute_thread(app: AppHandle, state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     valid_id(&thread_id)?;
+    ensure_remote_capable(&state, &thread_id)?;
     let already_muted = {
         let conn = state.db.lock().unwrap();
-        store::get_thread(&conn, &thread_id)
+        let muted = store::get_thread(&conn, &thread_id)
             .map(|t| t.labels.iter().any(|l| l == "Muted"))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if !muted {
+            store::toggle_label(&conn, &thread_id, "Muted")?;
+        }
+        store::set_in_inbox(&conn, &thread_id, false)?;
+        muted
     };
-    if !already_muted {
-        move_label(state.clone(), thread_id.clone(), "Muted".into()).await?;
-    }
-    remote_modify(&state, &thread_id, &[], &["INBOX"]).await?;
-    store::set_in_inbox(&state.db.lock().unwrap(), &thread_id, false)
+    let add = if already_muted { vec![] } else { vec![s("Muted")] };
+    spawn_remote(app, thread_id, RemoteTriage::Modify { add, remove: vec![s("INBOX")] });
+    Ok(())
 }
 
 #[tauri::command]
-async fn unmute_thread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+async fn unmute_thread(app: AppHandle, state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     valid_id(&thread_id)?;
-    let muted = {
+    ensure_remote_capable(&state, &thread_id)?;
+    let was_muted = {
         let conn = state.db.lock().unwrap();
-        store::get_thread(&conn, &thread_id)
+        let muted = store::get_thread(&conn, &thread_id)
             .map(|t| t.labels.iter().any(|l| l == "Muted"))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if muted {
+            store::toggle_label(&conn, &thread_id, "Muted")?;
+        }
+        store::set_in_inbox(&conn, &thread_id, true)?;
+        muted
     };
-    if muted {
-        move_label(state.clone(), thread_id.clone(), "Muted".into()).await?;
-    }
-    remote_modify(&state, &thread_id, &["INBOX"], &[]).await?;
-    store::set_in_inbox(&state.db.lock().unwrap(), &thread_id, true)
+    let remove = if was_muted { vec![s("Muted")] } else { vec![] };
+    spawn_remote(app, thread_id, RemoteTriage::Modify { add: vec![s("INBOX")], remove });
+    Ok(())
 }
 
 #[tauri::command]
@@ -765,8 +888,9 @@ fn unsubscribe_thread(
 }
 
 #[tauri::command]
-async fn toggle_star(state: State<'_, AppState>, thread_id: String) -> Result<bool, String> {
+async fn toggle_star(app: AppHandle, state: State<'_, AppState>, thread_id: String) -> Result<bool, String> {
     valid_id(&thread_id)?;
+    ensure_remote_capable(&state, &thread_id)?;
     let starred = {
         let conn = state.db.lock().unwrap();
         let t = store::get_thread(&conn, &thread_id).ok_or("unknown thread")?;
@@ -774,16 +898,18 @@ async fn toggle_star(state: State<'_, AppState>, thread_id: String) -> Result<bo
         store::set_starred(&conn, &thread_id, starred)?;
         starred
     };
-    if starred {
-        remote_modify(&state, &thread_id, &["STARRED"], &[]).await?;
+    let op = if starred {
+        RemoteTriage::Modify { add: vec![s("STARRED")], remove: vec![] }
     } else {
-        remote_modify(&state, &thread_id, &[], &["STARRED"]).await?;
-    }
+        RemoteTriage::Modify { add: vec![], remove: vec![s("STARRED")] }
+    };
+    spawn_remote(app, thread_id, op);
     Ok(starred)
 }
 
 #[tauri::command]
 async fn snooze_thread(
+    app: AppHandle,
     state: State<'_, AppState>,
     thread_id: String,
     until_ms: i64,
@@ -792,26 +918,33 @@ async fn snooze_thread(
     if until_ms <= now_ms() {
         return Err("snooze time must be in the future".into());
     }
-    remote_modify(&state, &thread_id, &[], &["INBOX"]).await?;
-    store::set_snoozed(&state.db.lock().unwrap(), &thread_id, until_ms)
+    ensure_remote_capable(&state, &thread_id)?;
+    store::set_snoozed(&state.db.lock().unwrap(), &thread_id, until_ms)?;
+    spawn_remote(app, thread_id, RemoteTriage::Modify { add: vec![], remove: vec![s("INBOX")] });
+    Ok(())
 }
 
 #[tauri::command]
-async fn mark_unread(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+async fn mark_unread(app: AppHandle, state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     valid_id(&thread_id)?;
-    remote_modify(&state, &thread_id, &["UNREAD"], &[]).await?;
-    store::set_unread(&state.db.lock().unwrap(), &thread_id, true)
+    ensure_remote_capable(&state, &thread_id)?;
+    store::set_unread(&state.db.lock().unwrap(), &thread_id, true)?;
+    spawn_remote(app, thread_id, RemoteTriage::Modify { add: vec![s("UNREAD")], remove: vec![] });
+    Ok(())
 }
 
 #[tauri::command]
-async fn mark_read(state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
+async fn mark_read(app: AppHandle, state: State<'_, AppState>, thread_id: String) -> Result<(), String> {
     valid_id(&thread_id)?;
-    remote_modify(&state, &thread_id, &[], &["UNREAD"]).await?;
-    store::set_unread(&state.db.lock().unwrap(), &thread_id, false)
+    ensure_remote_capable(&state, &thread_id)?;
+    store::set_unread(&state.db.lock().unwrap(), &thread_id, false)?;
+    spawn_remote(app, thread_id, RemoteTriage::Modify { add: vec![], remove: vec![s("UNREAD")] });
+    Ok(())
 }
 
 #[tauri::command]
 async fn move_label(
+    app: AppHandle,
     state: State<'_, AppState>,
     thread_id: String,
     label: String,
@@ -820,26 +953,17 @@ async fn move_label(
     if label.is_empty() || label.len() > 100 {
         return Err("invalid label".into());
     }
-    let (added, account) = {
+    ensure_remote_capable(&state, &thread_id)?;
+    let added = {
         let conn = state.db.lock().unwrap();
-        (
-            store::toggle_label(&conn, &thread_id, &label)?,
-            store::account_of_thread(&conn, &thread_id),
-        )
+        store::toggle_label(&conn, &thread_id, &label)?
     };
-    if !is_mock_id(&thread_id) {
-        if let Some(account) = account {
-            let mut sessions = state.gmail.lock().await;
-            if let Some(s) = sessions.get_mut(&account) {
-                let id = s.ensure_label_id(&state.http, &label).await?;
-                if added {
-                    s.modify_thread(&state.http, &thread_id, &[id.as_str()], &[]).await?;
-                } else {
-                    s.modify_thread(&state.http, &thread_id, &[], &[id.as_str()]).await?;
-                }
-            }
-        }
-    }
+    let op = if added {
+        RemoteTriage::Modify { add: vec![label], remove: vec![] }
+    } else {
+        RemoteTriage::Modify { add: vec![], remove: vec![label] }
+    };
+    spawn_remote(app, thread_id, op);
     Ok(())
 }
 
@@ -849,13 +973,13 @@ async fn bulk_archive(
     state: State<'_, AppState>,
     opts: BulkArchiveOpts,
 ) -> Result<i64, String> {
-    let (targets, settings) = {
+    let (targets, settings, active) = {
         let conn = state.db.lock().unwrap();
         let active = store::get_accounts(&conn).active;
-        (store::inbox_threads_for_sweep(&conn, &active)?, store::get_settings(&conn))
+        (store::inbox_threads_for_sweep(&conn, &active)?, store::get_settings(&conn), active)
     };
     let cutoff = now_ms() - opts.older_than_days * 24 * 3_600_000;
-    let mut n = 0i64;
+    let mut ids: Vec<String> = vec![];
     for t in targets {
         if opts.older_than_days > 0 && t.last_date > cutoff {
             continue;
@@ -871,9 +995,30 @@ async fn bulk_archive(
                 continue;
             }
         }
-        remote_modify(&state, &t.id, &[], &["INBOX"]).await?;
-        store::set_in_inbox(&state.db.lock().unwrap(), &t.id, false)?;
-        n += 1;
+        ids.push(t.id);
+    }
+    // Local writes are synchronous (instant); archive on Gmail in the background.
+    {
+        let conn = state.db.lock().unwrap();
+        for id in &ids {
+            store::set_in_inbox(&conn, id, false)?;
+        }
+    }
+    let n = ids.len() as i64;
+    let remote_ids: Vec<String> = ids.into_iter().filter(|id| !is_mock_id(id)).collect();
+    if !remote_ids.is_empty() {
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let state = app2.state::<AppState>();
+            let mut sessions = state.gmail.lock().await;
+            if let Some(sess) = sessions.get_mut(&active) {
+                for id in remote_ids {
+                    if let Err(e) = sess.modify_thread(&state.http, &id, &[], &["INBOX"]).await {
+                        eprintln!("[bulk_archive:{active}] {id}: {e}");
+                    }
+                }
+            }
+        });
     }
     let _ = app.emit("mail:updated", ());
     Ok(n)

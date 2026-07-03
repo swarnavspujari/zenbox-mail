@@ -12,6 +12,13 @@ export interface Binding {
   when?: () => boolean;
   /** Fire even while an overlay (palette/picker/celebration) is open. */
   bypassOverlays?: boolean;
+  /** Precomputed expr.split("|") (filled lazily, once per binding). */
+  alts?: string[];
+}
+
+/** The "|"-separated alternatives for a binding, computed once and cached. */
+function altsOf(b: Binding): string[] {
+  return (b.alts ??= b.expr.split("|").map((s) => s.trim()));
 }
 
 const CHORD_WINDOW_MS = 1200;
@@ -95,9 +102,8 @@ export function installKeyboard(cfg: Installed): () => void {
         if (overlay && !b.bypassOverlays) continue;
         if (editable && !candidate.includes("mod+") && candidate !== "escape")
           continue;
-        for (const alt of b.expr.split("|")) {
-          const exprAlt = alt.trim();
-          if (exprAlt === candidate && (!b.when || b.when())) return b;
+        for (const alt of altsOf(b)) {
+          if (alt === candidate && (!b.when || b.when())) return b;
         }
       }
       return null;
@@ -119,13 +125,10 @@ export function installKeyboard(cfg: Installed): () => void {
 
     // Is this token the start of any chord?
     if (!editable && !overlay) {
-      const opensChord = bindings.some((b) =>
-        b.expr
-          .split("|")
-          .some(
-            (alt) =>
-              alt.trim().startsWith(`${token} `) && (!b.when || b.when())
-          )
+      const opensChord = bindings.some(
+        (b) =>
+          altsOf(b).some((alt) => alt.startsWith(`${token} `)) &&
+          (!b.when || b.when())
       );
       if (opensChord) {
         pendingPrefix = token;

@@ -178,7 +178,7 @@ async fn reconcile(
 /// Fetch one thread and apply it locally. Handles deletion (404 → drop the
 /// local row), snooze preservation, and hidden threads. Returns true if the
 /// local DB changed.
-async fn refetch_thread(
+pub async fn refetch_thread(
     http: &reqwest::Client,
     session: &mut GmailSession,
     db: &std::sync::Mutex<Connection>,

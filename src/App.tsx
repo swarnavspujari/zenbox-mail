@@ -64,8 +64,31 @@ export default function App() {
       .load()
       .then(() => useMail.getState().refresh());
     startUpdateChecks();
-    const unsub = backend.onMailUpdated(() => void useMail.getState().refresh());
-    return unsub;
+
+    // Reconciliation is debounced: sync / outbox / the 30s loop emit
+    // mail:updated at arbitrary times, and a synchronous 4-IPC refresh
+    // mid-keystroke was a source of the input lag.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const debouncedRefresh = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void useMail.getState().refresh(), 400);
+    };
+    const unMail = backend.onMailUpdated(debouncedRefresh);
+    // inline images for the open thread resolved in the background — re-read it
+    const unImages = backend.onThreadImages((id) => {
+      if (useMail.getState().openThreadId === id)
+        void useMail.getState().refreshOpenThread();
+    });
+    // a deferred triage sync to Gmail failed — surface it (not silent)
+    const unTriage = backend.onTriageError((msg) =>
+      useUi.getState().showToast(msg)
+    );
+    return () => {
+      clearTimeout(timer);
+      unMail();
+      unImages();
+      unTriage();
+    };
   }, []);
 
   useEffect(() => {

@@ -27,6 +27,8 @@ interface MailState {
   select: (index: number) => void;
   moveSelection: (dir: 1 | -1) => void;
   openThread: (id: ThreadId) => Promise<void>;
+  /** Re-read the open thread's messages (e.g. when inline images resolve). */
+  refreshOpenThread: () => Promise<void>;
   closeThread: () => void;
 
   archive: (id: ThreadId) => Promise<void>;
@@ -125,10 +127,21 @@ export const useMail = create<MailState>((set, get) => ({
     }));
   },
 
+  refreshOpenThread: async () => {
+    const id = get().openThreadId;
+    if (!id) return;
+    const msgs = await backend.getThread(id);
+    // only apply if the user is still on this thread
+    if (get().openThreadId === id) set({ openMessages: msgs });
+  },
+
   closeThread: () => set({ openThreadId: null, openMessages: [] }),
 
+  // Triage actions move the thread locally (optimistic) and fire the backend
+  // without a trailing refresh() — that was 4 IPC round-trips per keystroke and
+  // the source of the input lag. The backend reconciles in the background
+  // (debounced mail:updated), so lists still converge after server-side changes.
   archive: async (id) => {
-    // optimistic: pull out of inbox immediately, then confirm with backend
     set((s) => {
       const t = s.inbox.find((t) => t.id === id);
       return {
@@ -137,7 +150,6 @@ export const useMail = create<MailState>((set, get) => ({
       };
     });
     await backend.archiveThread(id);
-    await get().refresh();
   },
 
   hide: async (id, reason) => {
@@ -148,23 +160,20 @@ export const useMail = create<MailState>((set, get) => ({
       starred: s.starred.filter((t) => t.id !== id),
     }));
     await backend.hideThread(id, reason);
-    await get().refresh();
   },
 
   restore: async (id) => {
+    // no cached copy to re-insert; the undo path refreshes after this resolves
     await backend.restoreThread(id);
-    await get().refresh();
   },
 
   mute: async (id) => {
     set((s) => ({ inbox: s.inbox.filter((t) => t.id !== id) }));
     await backend.muteThread(id);
-    await get().refresh();
   },
 
   unmute: async (id) => {
     await backend.unmuteThread(id);
-    await get().refresh();
   },
 
   toggleStar: async (id) => {
@@ -172,7 +181,6 @@ export const useMail = create<MailState>((set, get) => ({
       list.map((t) => (t.id === id ? { ...t, starred: !t.starred } : t));
     set((s) => ({ inbox: flip(s.inbox), done: flip(s.done), reminders: flip(s.reminders) }));
     await backend.toggleStar(id);
-    await get().refresh();
   },
 
   snooze: async (id, untilMs) => {
@@ -186,7 +194,6 @@ export const useMail = create<MailState>((set, get) => ({
       };
     });
     await backend.snoozeThread(id, untilMs);
-    await get().refresh();
   },
 
   markUnread: async (id) => {
@@ -204,13 +211,38 @@ export const useMail = create<MailState>((set, get) => ({
   },
 
   moveLabel: async (id, label) => {
+    // optimistic toggle so split reassignment shows instantly
+    const toggle = (t: Thread) =>
+      t.id === id
+        ? {
+            ...t,
+            labels: t.labels.includes(label)
+              ? t.labels.filter((l) => l !== label)
+              : [...t.labels, label],
+          }
+        : t;
+    set((s) => ({
+      inbox: s.inbox.map(toggle),
+      done: s.done.map(toggle),
+      reminders: s.reminders.map(toggle),
+      starred: s.starred.map(toggle),
+    }));
     await backend.moveLabel(id, label);
-    await get().refresh();
   },
 
   moveToInbox: async (id) => {
+    set((s) => {
+      const t =
+        s.done.find((t) => t.id === id) ??
+        s.reminders.find((t) => t.id === id) ??
+        s.starred.find((t) => t.id === id);
+      return {
+        done: s.done.filter((t) => t.id !== id),
+        reminders: s.reminders.filter((t) => t.id !== id),
+        inbox: t ? [{ ...t, inInbox: true, snoozedUntil: null }, ...s.inbox] : s.inbox,
+      };
+    });
     await backend.moveToInbox(id);
-    await get().refresh();
   },
 
   runSearch: async (query) => {

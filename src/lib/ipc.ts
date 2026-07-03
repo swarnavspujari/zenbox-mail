@@ -107,6 +107,10 @@ export interface Backend {
 
   /** Backend pushes when sync/reminders change mail state. Returns unsubscribe. */
   onMailUpdated(cb: () => void): () => void;
+  /** Fires when an opened thread's inline images finish resolving (threadId). */
+  onThreadImages(cb: (threadId: string) => void): () => void;
+  /** Fires when a background triage sync to Gmail failed (message). */
+  onTriageError(cb: (message: string) => void): () => void;
 }
 
 export const isTauri =
@@ -273,6 +277,18 @@ class TauriBackend implements Backend {
   }
   onMailUpdated(cb: () => void): () => void {
     const un = listen("mail:updated", cb);
+    return () => {
+      void un.then((f) => f());
+    };
+  }
+  onThreadImages(cb: (threadId: string) => void): () => void {
+    const un = listen<string>("thread:images", (e) => cb(e.payload));
+    return () => {
+      void un.then((f) => f());
+    };
+  }
+  onTriageError(cb: (message: string) => void): () => void {
+    const un = listen<string>("triage:error", (e) => cb(e.payload));
     return () => {
       void un.then((f) => f());
     };
