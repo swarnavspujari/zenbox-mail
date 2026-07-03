@@ -110,7 +110,7 @@ export default function App() {
   if (!loaded) {
     return (
       <div className="flex h-full items-center justify-center text-ink-3">
-        Loading ZenBox…
+        Loading Fission…
       </div>
     );
   }
@@ -129,7 +129,7 @@ export default function App() {
         <span className="flex items-center gap-2.5">
           <span className="inline-block h-[15px] w-[15px] rotate-45 rounded-[4px] bg-accent" />
           <span className="text-[15px] font-semibold tracking-tight text-ink">
-            ZenBox
+            Fission
           </span>
         </span>
         <div className="flex items-center gap-2 rounded-full border border-line bg-surface py-1 pl-1.5 pr-2 hover:border-line-strong">

@@ -499,7 +499,7 @@ export function allCommands(): Command[] {
       run: () => {
         // Compose owns validation + the actual send; reach it via event so
         // draft state lives in exactly one place.
-        window.dispatchEvent(new CustomEvent("zenbox:send"));
+        window.dispatchEvent(new CustomEvent("fission:send"));
       },
     },
     {
@@ -510,7 +510,7 @@ export function allCommands(): Command[] {
       when: () => inCompose(),
       run: () => {
         window.dispatchEvent(
-          new CustomEvent("zenbox:send", { detail: { markDone: true } })
+          new CustomEvent("fission:send", { detail: { markDone: true } })
         );
       },
     },

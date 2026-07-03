@@ -40,15 +40,17 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Baked-in beta OAuth client so testers skip the Google-console setup
-          # (optional — builds without it still accept pasted credentials)
-          ZENBOX_GMAIL_CLIENT_ID: ${{ secrets.ZENBOX_GMAIL_CLIENT_ID }}
-          ZENBOX_GMAIL_CLIENT_SECRET: ${{ secrets.ZENBOX_GMAIL_CLIENT_SECRET }}
+          # (optional — builds without it still accept pasted credentials).
+          # New env-var names read from the existing repo secrets; the Rust code
+          # also falls back to the legacy ZENBOX_* env for older builds.
+          FISSION_GMAIL_CLIENT_ID: ${{ secrets.ZENBOX_GMAIL_CLIENT_ID }}
+          FISSION_GMAIL_CLIENT_SECRET: ${{ secrets.ZENBOX_GMAIL_CLIENT_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "ZenBox Mail ${{ github.ref_name }}"
+          releaseName: "Fission Mail ${{ github.ref_name }}"
           releaseBody: |
-            ZenBox Mail ${{ github.ref_name }} — download the Windows installer
-            below (`ZenBox.Mail_*_x64-setup.exe`). Existing installs update
+            Fission Mail ${{ github.ref_name }} — download the Windows installer
+            below (`Fission.Mail_*_x64-setup.exe`). Existing installs update
             themselves automatically.
           releaseDraft: false
           prerelease: false

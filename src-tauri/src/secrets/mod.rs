@@ -1,8 +1,11 @@
 //! OS-keychain storage (Windows Credential Manager via the `keyring` crate).
-//! Every secret ZenBox holds lives here: AI keys and Gmail OAuth material.
+//! Every secret Fission holds lives here: AI keys and Gmail OAuth material.
 //! Values never appear in logs, errors, or the SQLite file.
 
-const SERVICE: &str = "ZenBoxMail";
+const SERVICE: &str = "FissionMail";
+/// Pre-rename service name. Secrets are read from here as a fallback and copied
+/// forward on first access, so existing installs keep their tokens + AI keys.
+const LEGACY_SERVICE: &str = "ZenBoxMail";
 
 pub const AI_CLAUDE: &str = "ai:claude";
 pub const AI_OPENAI: &str = "ai:openai";
@@ -36,7 +39,19 @@ pub fn set(name: &str, value: &str) -> Result<(), String> {
 }
 
 pub fn get(name: &str) -> Option<String> {
-    entry(name).ok()?.get_password().ok()
+    if let Ok(e) = entry(name) {
+        if let Ok(v) = e.get_password() {
+            return Some(v);
+        }
+    }
+    // Fall back to the pre-rename service and migrate the value forward.
+    if let Ok(old) = keyring::Entry::new(LEGACY_SERVICE, name) {
+        if let Ok(v) = old.get_password() {
+            let _ = set(name, &v);
+            return Some(v);
+        }
+    }
+    None
 }
 
 pub fn delete(name: &str) {

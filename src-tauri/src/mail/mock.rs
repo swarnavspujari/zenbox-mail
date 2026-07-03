@@ -71,7 +71,7 @@ struct Seed {
     msgs: Vec<SeedMsg>,
 }
 
-const ME: &str = "you@zenbox.local";
+const ME: &str = "you@fission.local";
 const A1: &str = crate::store::DEMO_ACCOUNT;
 const A2: &str = crate::store::DEMO_ACCOUNT_2;
 
@@ -144,7 +144,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             in_inbox: true,
             account: A1,
             msgs: vec![SeedMsg {
-                from: "priya@zenboxventures.com",
+                from: "priya@fissionventures.com",
                 from_name: "Priya Nair",
                 to: vec![ME.into()],
                 cc: vec![],
@@ -261,7 +261,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
         },
         Seed {
             id: "t-github",
-            subject: "[zenbox-mail] Your workflow run failed: CI on main",
+            subject: "[fission-mail] Your workflow run failed: CI on main",
             starred: false,
             labels: vec![],
             in_inbox: true,
@@ -412,7 +412,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             in_inbox: false,
             account: A1,
             msgs: vec![SeedMsg {
-                from: "priya@zenboxventures.com",
+                from: "priya@fissionventures.com",
                 from_name: "Priya Nair",
                 to: vec![ME.into()],
                 cc: vec![],

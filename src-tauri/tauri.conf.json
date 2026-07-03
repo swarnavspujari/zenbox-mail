@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ZenBox Mail",
+  "productName": "Fission Mail",
   "version": "0.7.0",
-  "identifier": "com.zenbox.mail",
+  "identifier": "com.fission.mail",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "ZenBox Mail",
+        "title": "Fission Mail",
         "width": 1280,
         "height": 840,
         "minWidth": 940,
@@ -43,7 +43,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkyNUQ0QTUxNkQ5MTE2NTgKUldSWUZwRnRVVXBka2s0RnBuSUMvTko3Uk1DYmJtNUNLc0VuUVl6bVlENm9tamlHdmhyQXY3K2MK",
       "endpoints": [
-        "https://github.com/swarnavspujari/zenbox-mail/releases/latest/download/latest.json"
+        "https://github.com/swarnavspujari/email-productivity-client/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

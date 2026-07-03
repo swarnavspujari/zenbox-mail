@@ -1,6 +1,6 @@
 # AI Providers — bring your own key
 
-ZenBox never proxies your prompts through anyone's servers. The Rust core calls your chosen provider directly with your key, which lives in the Windows Credential Manager (service `ZenBoxMail`). Keys are write-only over IPC, never logged, never in errors, never in the repo.
+Fission never proxies your prompts through anyone's servers. The Rust core calls your chosen provider directly with your key, which lives in the Windows Credential Manager (service `FissionMail`). Keys are write-only over IPC, never logged, never in errors, never in the repo.
 
 Configure everything in **Settings → AI Providers**: paste a key, pick the default provider (radio), adjust the model, and hit **Test connection**.
 
@@ -20,7 +20,7 @@ Configure everything in **Settings → AI Providers**: paste a key, pick the def
 
 ## NVIDIA NIM
 
-NIM speaks the OpenAI API, so ZenBox reuses the OpenAI adapter with a configurable **base URL**:
+NIM speaks the OpenAI API, so Fission reuses the OpenAI adapter with a configurable **base URL**:
 
 - **Hosted:** [build.nvidia.com](https://build.nvidia.com) → pick a model → *Get API Key* (`nvapi-…`). Base URL `https://integrate.api.nvidia.com/v1`, model e.g. `meta/llama-3.3-70b-instruct`.
 - **Self-hosted:** point the base URL at your NIM container, e.g. `http://your-host:8000/v1`.
@@ -28,7 +28,7 @@ NIM speaks the OpenAI API, so ZenBox reuses the OpenAI adapter with a configurab
 
 ## What the model sees (and doesn't)
 
-Per request, the Context Assembler sends: the thread transcript (oldest quoted trails trimmed first under a ~25k-token budget), extracted attachment text (PDF, plain text, best-effort .docx; capped), image attachments for multimodal providers, your Knowledge Base (instructions, snippets, voice examples), and your instruction. Nothing is stored provider-side by ZenBox; retention is governed by your provider agreement.
+Per request, the Context Assembler sends: the thread transcript (oldest quoted trails trimmed first under a ~25k-token budget), extracted attachment text (PDF, plain text, best-effort .docx; capped), image attachments for multimodal providers, your Knowledge Base (instructions, snippets, voice examples), and your instruction. Nothing is stored provider-side by Fission; retention is governed by your provider agreement.
 
 ## Behavior when a key is missing
 

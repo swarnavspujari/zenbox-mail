@@ -1,19 +1,19 @@
 # Distribution: installers, updates, and code signing
 
-How ZenBox Mail gets onto a tester's machine and stays current.
+How Fission Mail gets onto a tester's machine and stays current.
 
 ## What ships today
 
 - Every `v*` tag triggers `.github/workflows/release.yml`, which builds the
   NSIS installer on `windows-latest` and publishes a GitHub Release with:
-  - `ZenBox Mail_<version>_x64-setup.exe` — what testers download
-  - `ZenBox Mail_<version>_x64-setup.exe.sig` + `latest.json` — the update feed
+  - `Fission Mail_<version>_x64-setup.exe` — what testers download
+  - `Fission Mail_<version>_x64-setup.exe.sig` + `latest.json` — the update feed
 - The app checks `releases/latest/download/latest.json` at boot and every 4
   hours, downloads in the background, and shows **"Update ready — Restart"**
   in the header. Updater artifacts are signed with a minisign key
   (public key pinned in `tauri.conf.json`; private key lives in the
   `TAURI_SIGNING_PRIVATE_KEY` repo secret and in
-  `C:\Users\swarn\.zenbox-mail-keys\zenbox_updater.key` — **back this file up;
+  `C:\Users\swarn\.fission-mail-keys\fission_updater.key` — **back this file up;
   lose it and existing installs can never update again**).
 
 ## SmartScreen: why testers see a scary prompt
@@ -91,8 +91,8 @@ next launch).
 
 ## What testers do (send them this)
 
-1. Download `ZenBox Mail_…_x64-setup.exe` from
-   <https://github.com/swarnavspujari/zenbox-mail/releases/latest>
+1. Download `Fission Mail_…_x64-setup.exe` from
+   <https://github.com/swarnavspujari/email-productivity-client/releases/latest>
 2. Run it. If Windows warns: **More info → Run anyway** (beta is unsigned).
 3. The app opens with a demo inbox. Click through the welcome flow to
    connect Gmail — a browser window asks for Google consent

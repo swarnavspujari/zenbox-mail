@@ -1,4 +1,4 @@
-// Generates the ZenBox app icon (512x512 PNG): a dark rounded square with a
+// Generates the Fission app icon (512x512 PNG): a dark rounded square with a
 // deep indigo "Z". Zero image dependencies — hand-encodes the PNG.
 import { deflateSync } from "node:zlib";
 import { writeFileSync, mkdirSync } from "node:fs";

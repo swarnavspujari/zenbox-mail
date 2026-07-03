@@ -1,6 +1,6 @@
 # Google OAuth: what your testers will see, and what verification takes
 
-ZenBox uses one Google Cloud OAuth client (project `zenbox-mail`, Desktop-app
+Fission uses one Google Cloud OAuth client (project `fission-mail`, Desktop-app
 type) with the `gmail.modify` scope. This page covers the consent-screen
 states, exactly what beta testers experience, and the path past 100 users.
 
@@ -20,7 +20,7 @@ does *not* require verification up front.
 ## One-time console steps (you must do these)
 
 1. **Enable the APIs the app calls.** ☰ → *APIs & Services* → *Library*, in
-   project `zenbox-mail`, and **Enable** both:
+   project `fission-mail`, and **Enable** both:
    - **Gmail API**
    - **Google Calendar API** — easy to miss, and this is the one that bites:
      until it's enabled the calendar panel returns a 403
@@ -28,9 +28,9 @@ does *not* require verification up front.
      tester, no matter how many times they reconnect. Enabling it here fixes it
      for all testers at once. (Newly enabled APIs can take a minute to propagate.)
 2. <https://console.cloud.google.com/apis/credentials/consent> → project
-   `zenbox-mail`.
+   `fission-mail`.
 3. Confirm **User type: External**.
-4. Fill the required fields if empty: app name "ZenBox Mail", user support
+4. Fill the required fields if empty: app name "Fission Mail", user support
    email, developer contact email. (Logo optional — adding one *triggers*
    brand verification review; skip it for now.)
 5. Click **Publish app** → confirm "Push to production".
@@ -39,16 +39,16 @@ does *not* require verification up front.
 ## What a tester experiences (send them this, verbatim)
 
 > When you click **Connect Gmail**, your browser opens a Google sign-in page.
-> Because ZenBox is a small beta, Google shows a warning screen:
+> Because Fission is a small beta, Google shows a warning screen:
 >
 > **"Google hasn't verified this app"**
 >
 > 1. Click **Advanced** (bottom left).
-> 2. Click **Go to zenbox-mail (unsafe)** — it's your own mailbox, on your
+> 2. Click **Go to fission-mail (unsafe)** — it's your own mailbox, on your
 >    own computer; nothing leaves your machine.
 > 3. Check the box granting access to Gmail and click **Continue**.
 >
-> You'll land back in ZenBox with your inbox syncing.
+> You'll land back in Fission with your inbox syncing.
 
 Notes:
 - The unverified-app screen appears for **every new user**, once.
@@ -77,14 +77,14 @@ verified requires, in order:
 
 Cheaper alternatives if the cap ever bites before verification:
 - Switch to `gmail.readonly` + `gmail.send`? **No** — both are also
-  restricted; archiving/labeling (the core of ZenBox triage) needs modify
+  restricted; archiving/labeling (the core of Fission triage) needs modify
   anyway. There is no non-restricted scope that can do this job.
-- Have power users create their **own** OAuth client (ZenBox already accepts
+- Have power users create their **own** OAuth client (Fission already accepts
   pasted client credentials in Settings → Account). Each personal client has
   its own 100-user pool of one. Nerd-friendly escape hatch, not a
   mainstream one; documented in docs/SETUP.md.
 
-## Scopes ZenBox requests
+## Scopes Fission requests
 
 | Scope | Why | Tier |
 |---|---|---|

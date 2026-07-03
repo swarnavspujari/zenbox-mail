@@ -80,7 +80,7 @@ export function Onboarding() {
         <div className="mb-8 flex items-center justify-center gap-2.5">
           <span className="inline-block h-6 w-6 rotate-45 rounded-[6px] bg-accent" />
           <span className="text-[22px] font-semibold tracking-tight text-ink">
-            ZenBox Mail
+            Fission Mail
           </span>
         </div>
 
@@ -112,10 +112,10 @@ export function Onboarding() {
             </div>
             {isTauri && (
               <p className="mt-4 text-[12px] leading-relaxed text-ink-3">
-                Your browser will ask for Google consent. Because ZenBox is a
+                Your browser will ask for Google consent. Because Fission is a
                 small beta, Google shows “unverified app” — click{" "}
-                <b>Advanced → Go to zenbox-mail</b>. Mail never leaves your
-                computer.
+                <b>Advanced</b>, then <b>Continue</b> to the app. Mail never
+                leaves your computer.
               </p>
             )}
             {msg && <p className="mt-3 text-[12.5px] text-bad">{msg}</p>}
@@ -204,7 +204,7 @@ export function Onboarding() {
               any command by name.
             </p>
             <button className={`${primaryBtn} mt-6`} onClick={finish}>
-              Start using ZenBox
+              Start using Fission
             </button>
           </div>
         )}

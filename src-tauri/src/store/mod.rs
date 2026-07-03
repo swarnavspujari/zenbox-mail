@@ -71,7 +71,7 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
 
     // v0.2 migration: per-account mail. Errors mean the column already exists.
     let _ = conn.execute(
-        "ALTER TABLE threads ADD COLUMN account_id TEXT NOT NULL DEFAULT 'demo@zenbox.local'",
+        "ALTER TABLE threads ADD COLUMN account_id TEXT NOT NULL DEFAULT 'demo@fission.local'",
         [],
     );
     // v0.3 migrations: soft trash/spam, unsubscribe header, scheduled sends.
@@ -102,8 +102,8 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
     Ok(conn)
 }
 
-pub const DEMO_ACCOUNT: &str = "demo@zenbox.local";
-pub const DEMO_ACCOUNT_2: &str = "angel@zenbox.local";
+pub const DEMO_ACCOUNT: &str = "demo@fission.local";
+pub const DEMO_ACCOUNT_2: &str = "angel@fission.local";
 
 pub fn get_accounts(conn: &Connection) -> AccountsState {
     if let Some(state) = get_json::<AccountsState>(conn, "accounts") {

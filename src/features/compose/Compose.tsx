@@ -251,8 +251,8 @@ export function Compose() {
     };
     const handler = (e: Event) =>
       void send(Boolean((e as CustomEvent).detail?.markDone));
-    window.addEventListener("zenbox:send", handler);
-    return () => window.removeEventListener("zenbox:send", handler);
+    window.addEventListener("fission:send", handler);
+    return () => window.removeEventListener("fission:send", handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sending]);
 
@@ -379,7 +379,7 @@ export function Compose() {
 
         <div className="flex items-center gap-3 border-t border-line px-4 py-3">
           <button
-            onClick={() => window.dispatchEvent(new CustomEvent("zenbox:send"))}
+            onClick={() => window.dispatchEvent(new CustomEvent("fission:send"))}
             disabled={sending}
             className="rounded-md bg-accent px-4 py-1.5 text-[13px] font-medium text-on-accent hover:bg-accent-strong disabled:opacity-50"
           >

@@ -1,5 +1,7 @@
-# Reads the ZenBox Gmail OAuth client from Windows Credential Manager and
+# Reads the Fission Gmail OAuth client from Windows Credential Manager and
 # pushes it to GitHub Actions secrets. Values are never printed.
+# NOTE: the keychain service is still "ZenBoxMail" (secrets migrate lazily) and
+# the CI secret names stay ZENBOX_* to match .github/workflows/release.yml.
 $ErrorActionPreference = "Stop"
 
 Add-Type -TypeDefinition @"
@@ -34,8 +36,8 @@ $id = [CredMan]::Read("gmail:client_id.ZenBoxMail")
 $secret = [CredMan]::Read("gmail:client_secret.ZenBoxMail")
 if ($id.Length -lt 10 -or $secret.Length -lt 10) { throw "credential looks empty" }
 
-$id | gh secret set ZENBOX_GMAIL_CLIENT_ID --repo swarnavspujari/zenbox-mail
+$id | gh secret set ZENBOX_GMAIL_CLIENT_ID --repo swarnavspujari/email-productivity-client
 if ($LASTEXITCODE -ne 0) { throw "gh secret set client id failed" }
-$secret | gh secret set ZENBOX_GMAIL_CLIENT_SECRET --repo swarnavspujari/zenbox-mail
+$secret | gh secret set ZENBOX_GMAIL_CLIENT_SECRET --repo swarnavspujari/email-productivity-client
 if ($LASTEXITCODE -ne 0) { throw "gh secret set client secret failed" }
 Write-Output "OK: ZENBOX_GMAIL_CLIENT_ID ($($id.Length) chars) and ZENBOX_GMAIL_CLIENT_SECRET ($($secret.Length) chars) set"

@@ -31,7 +31,7 @@ import {
   defaultSettings,
 } from "./defaults";
 
-const LS_KEY = "zenbox-mock-state-v1";
+const LS_KEY = "fission-mock-state-v1";
 
 interface PersistedState {
   threadPatches: Record<
@@ -338,7 +338,7 @@ export class MockBackend implements Backend {
         msgs.push({
           id: `${mail.threadId}-m${msgs.length + 1}`,
           threadId: mail.threadId,
-          from: "you@zenbox.local",
+          from: "you@fission.local",
           fromName: "You",
           to: mail.to,
           cc: mail.cc,
@@ -359,7 +359,7 @@ export class MockBackend implements Backend {
       const msg: Message = {
         id: `${id}-m1`,
         threadId: id,
-        from: "you@zenbox.local",
+        from: "you@fission.local",
         fromName: "You",
         to: mail.to,
         cc: mail.cc,

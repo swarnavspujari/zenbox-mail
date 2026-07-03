@@ -18,9 +18,9 @@ interface Seed {
   >;
 }
 
-const ME = "you@zenbox.local";
-export const DEMO_ACCOUNT = "demo@zenbox.local";
-export const DEMO_ACCOUNT_2 = "angel@zenbox.local";
+const ME = "you@fission.local";
+export const DEMO_ACCOUNT = "demo@fission.local";
+export const DEMO_ACCOUNT_2 = "angel@fission.local";
 
 const seeds: Seed[] = [
   {
@@ -93,7 +93,7 @@ const seeds: Seed[] = [
     },
     messages: [
       {
-        from: "priya@zenboxventures.com",
+        from: "priya@fissionventures.com",
         fromName: "Priya Nair",
         to: [ME],
         cc: [],
@@ -252,7 +252,7 @@ const seeds: Seed[] = [
   {
     thread: {
       id: "t-github",
-      subject: "[zenbox-mail] Your workflow run failed: CI on main",
+      subject: "[fission-mail] Your workflow run failed: CI on main",
       unread: false,
       starred: false,
       labels: [],
@@ -455,7 +455,7 @@ const doneSeed: Seed[] = [
     },
     messages: [
       {
-        from: "priya@zenboxventures.com",
+        from: "priya@fissionventures.com",
         fromName: "Priya Nair",
         to: [ME],
         cc: [],

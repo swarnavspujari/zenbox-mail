@@ -4,7 +4,7 @@ Run each step in order on Windows 11. Each maps to a Definition-of-Done item.
 
 ## 0. Install or build (≈3 min first time)
 
-**Installer:** run `ZenBox Mail_x64-setup.exe` from `src-tauri/target/release/bundle/nsis/` (or a release download) and launch ZenBox Mail from the Start Menu.
+**Installer:** run `Fission Mail_x64-setup.exe` from `src-tauri/target/release/bundle/nsis/` (or a release download) and launch Fission Mail from the Start Menu.
 
 **From source:**
 ```powershell
@@ -75,14 +75,14 @@ npm run app:dev
 ## 6. Real Gmail (2 min + one-time OAuth client)
 
 1. Follow docs/SETUP.md §3 once → Settings → Account → paste Client ID/Secret → **Connect Gmail** → browser consent → inbox syncs (`ssp@rubiareserve.com`).
-2. `E` a real thread → it's archived in Gmail (check the web UI). Reply from Gmail → the thread returns to the ZenBox inbox on the next sync (≤60s).
+2. `E` a real thread → it's archived in Gmail (check the web UI). Reply from Gmail → the thread returns to the Fission inbox on the next sync (≤60s).
 3. `R` → `Ctrl+Enter` → the reply actually sends (threaded, In-Reply-To set).
 
 ✅ *DoD: authenticate and see real inbox threads.*
 
 ## 7. Secrets hygiene (30s)
 
-1. Windows *Credential Manager* → Windows Credentials → entries under `ZenBoxMail` (AI keys, OAuth) — that's where everything lives.
+1. Windows *Credential Manager* → Windows Credentials → entries under `FissionMail` (AI keys, OAuth) — that's where everything lives.
 2. Repo scan is clean:
    ```powershell
    git grep -iE "(sk-ant-|sk-proj|nvapi-|refresh_token\s*=|client_secret\s*[:=]\s*['\"])" -- ':!docs' ':!*.md'

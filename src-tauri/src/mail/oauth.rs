@@ -98,9 +98,9 @@ pub async fn run_flow(
                 }
             }
             let (status, body) = if error.is_some() {
-                ("200 OK", "<h2>ZenBox Mail</h2><p>Access was denied. You can close this tab and try again from the app.</p>")
+                ("200 OK", "<h2>Fission Mail</h2><p>Access was denied. You can close this tab and try again from the app.</p>")
             } else if code.is_some() && got_state.as_deref() == Some(state.as_str()) {
-                ("200 OK", "<h2>ZenBox Mail</h2><p>Connected. You can close this tab and return to the app.</p>")
+                ("200 OK", "<h2>Fission Mail</h2><p>Connected. You can close this tab and return to the app.</p>")
             } else {
                 ("400 Bad Request", "<p>Unexpected request.</p>")
             };

@@ -54,7 +54,7 @@ fn strip_quoted(body: &str) -> String {
 pub fn build_system(kb: &KnowledgeBase, account_email: &str) -> String {
     let mut s = String::new();
     s.push_str(
-        "You are the email-drafting engine inside ZenBox Mail. You write on behalf of the user, \
+        "You are the email-drafting engine inside Fission Mail. You write on behalf of the user, \
          in their voice, ready to send. Output ONLY the email body — no subject line, no preamble, \
          no markdown fences, no commentary. Match the thread's language and formality.\n",
     );

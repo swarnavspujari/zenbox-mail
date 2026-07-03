@@ -1,4 +1,4 @@
-//! ZenBox Mail core: IPC surface, app state, and the background loop.
+//! Fission Mail core: IPC surface, app state, and the background loop.
 //! Every command validates its inputs; every secret stays in the keychain.
 mod ai;
 mod mail;
@@ -28,8 +28,16 @@ pub struct AppState {
 // cannot keep secrets by design — Google's model accepts an embedded id/secret
 // for installed apps (PKCE still guards the flow). Keychain-pasted credentials
 // always win over these.
-const BAKED_GMAIL_CLIENT_ID: Option<&str> = option_env!("ZENBOX_GMAIL_CLIENT_ID");
-const BAKED_GMAIL_CLIENT_SECRET: Option<&str> = option_env!("ZENBOX_GMAIL_CLIENT_SECRET");
+// Prefer the FISSION_* build-time env; fall back to the legacy ZENBOX_* so the
+// existing CI repo secret keeps working through the rename.
+const BAKED_GMAIL_CLIENT_ID: Option<&str> = match option_env!("FISSION_GMAIL_CLIENT_ID") {
+    Some(v) => Some(v),
+    None => option_env!("ZENBOX_GMAIL_CLIENT_ID"),
+};
+const BAKED_GMAIL_CLIENT_SECRET: Option<&str> = match option_env!("FISSION_GMAIL_CLIENT_SECRET") {
+    Some(v) => Some(v),
+    None => option_env!("ZENBOX_GMAIL_CLIENT_SECRET"),
+};
 
 const BUNDLED_CELEBRATIONS: [&str; 4] = [
     "/inbox-zero/dawn-ridge.svg",
@@ -359,7 +367,7 @@ fn notify_new_mail(app: &AppHandle, since_ms: i64) {
         let _ = app
             .notification()
             .builder()
-            .title("ZenBox Mail")
+            .title("Fission Mail")
             .body("…and more new mail")
             .show();
     }
@@ -1471,7 +1479,26 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let conn = store::open(&data_dir.join("zenbox.db")).map_err(std::io::Error::other)?;
+            let db_path = data_dir.join("fission.db");
+            // Migrate a pre-rename install: the old bundle identifier
+            // (com.zenbox.mail) had its own app-data dir with zenbox.db. Copy it
+            // (with its WAL sidecars) once so accounts + cached mail carry over.
+            // Keychain secrets migrate lazily in secrets::get.
+            if !db_path.exists() {
+                if let Some(old_dir) = data_dir.parent().map(|p| p.join("com.zenbox.mail")) {
+                    for (from, to) in [
+                        ("zenbox.db", "fission.db"),
+                        ("zenbox.db-wal", "fission.db-wal"),
+                        ("zenbox.db-shm", "fission.db-shm"),
+                    ] {
+                        let src = old_dir.join(from);
+                        if src.exists() {
+                            let _ = std::fs::copy(&src, data_dir.join(to));
+                        }
+                    }
+                }
+            }
+            let conn = store::open(&db_path).map_err(std::io::Error::other)?;
 
             let accounts = store::get_accounts(&conn);
             let mut sessions = HashMap::new();
@@ -1525,11 +1552,11 @@ pub fn run() {
                 cancels: Mutex::new(HashMap::new()),
             });
 
-            // Dev-only: ZENBOX_AI_SMOKE=1 streams one real draft at startup and
+            // Dev-only: FISSION_AI_SMOKE=1 streams one real draft at startup and
             // logs the result — end-to-end proof of context assembly + adapter
             // + SSE parsing against the configured default provider.
             #[cfg(debug_assertions)]
-            if std::env::var("ZENBOX_AI_SMOKE").is_ok() {
+            if std::env::var("FISSION_AI_SMOKE").is_ok() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     let state = handle.state::<AppState>();
@@ -1729,5 +1756,5 @@ pub fn run() {
             list_celebration_images,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running ZenBox Mail");
+        .expect("error while running Fission Mail");
 }

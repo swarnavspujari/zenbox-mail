@@ -1,8 +1,8 @@
-# ZenBox Mail
+# Fission Mail
 
 A **keyboard-first, AI-native desktop email client** in the spirit of Superhuman — built with Tauri v2 (Rust core + system webview), React, and your own AI keys. Local-first: your mail cache, your settings, and your API keys never leave your machine.
 
-> **Status:** v0.7 beta — Windows 11, auto-updating installer on the [Releases page](https://github.com/swarnavspujari/zenbox-mail/releases/latest). The same codebase targets macOS next, then iOS/Android via Tauri v2 mobile.
+> **Status:** v0.7 beta — Windows 11, auto-updating installer on the [Releases page](https://github.com/swarnavspujari/email-productivity-client/releases/latest). The same codebase targets macOS next, then iOS/Android via Tauri v2 mobile.
 
 *(screenshots/GIFs coming — run it and hit `Ctrl+K`)*
 
@@ -24,8 +24,8 @@ A **keyboard-first, AI-native desktop email client** in the spirit of Superhuman
 ## Install (beta testers)
 
 Grab the latest Windows installer from the
-[**Releases page**](https://github.com/swarnavspujari/zenbox-mail/releases/latest)
-(`ZenBox Mail_…_x64-setup.exe`). Windows will warn that the beta isn't
+[**Releases page**](https://github.com/swarnavspujari/email-productivity-client/releases/latest)
+(`Fission Mail_…_x64-setup.exe`). Windows will warn that the beta isn't
 code-signed yet — click **More info → Run anyway**. The app updates itself
 automatically from then on. Details in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
 
@@ -39,8 +39,8 @@ automatically from then on. Details in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.
 ## Run it
 
 ```powershell
-git clone https://github.com/swarnavspujari/zenbox-mail.git
-cd zenbox-mail
+git clone https://github.com/swarnavspujari/email-productivity-client.git
+cd email-productivity-client
 npm install
 npm run app:dev     # desktop app (first Rust build takes a few minutes)
 ```
@@ -57,7 +57,7 @@ Browser-only UI dev (mock backend, instant reload): `npm run dev` → http://loc
 
 ## Connect Gmail
 
-**Installer builds:** just click **Connect Gmail** in the welcome flow — a shared beta OAuth client is built in. Google shows an "unverified app" notice once; click *Advanced → Go to zenbox-mail* ([why](docs/GOOGLE_OAUTH.md)).
+**Installer builds:** just click **Connect Gmail** in the welcome flow — a shared beta OAuth client is built in. Google shows an "unverified app" notice once; click *Advanced → Go to fission-mail* ([why](docs/GOOGLE_OAUTH.md)).
 
 **Building from source:** bring your own Google OAuth client (Desktop app type, ~5 minutes) — follow [docs/SETUP.md](docs/SETUP.md), then paste the Client ID + Secret into **Settings → Account**. Tokens go straight into the OS keychain either way.
 

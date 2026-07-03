@@ -1,12 +1,12 @@
-//! Dev utility: seed or check ZenBox keychain entries without launching the
-//! app. Values come from the ZENBOX_SECRET_VALUE env var — never from argv,
+//! Dev utility: seed or check Fission keychain entries without launching the
+//! app. Values come from the FISSION_SECRET_VALUE env var — never from argv,
 //! never printed — so secrets stay out of shell history and logs.
 //!
-//!   ZENBOX_SECRET_VALUE=... cargo run --bin dev-secrets -- set ai:nim
+//!   FISSION_SECRET_VALUE=... cargo run --bin dev-secrets -- set ai:nim
 //!   cargo run --bin dev-secrets -- check ai:nim
 //!   cargo run --bin dev-secrets -- delete ai:nim
 
-const SERVICE: &str = "ZenBoxMail";
+const SERVICE: &str = "FissionMail";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -20,8 +20,8 @@ fn main() {
     let entry = keyring::Entry::new(SERVICE, name).expect("keychain unavailable");
     match cmd {
         "set" => {
-            let value = std::env::var("ZENBOX_SECRET_VALUE")
-                .expect("ZENBOX_SECRET_VALUE env var not set");
+            let value = std::env::var("FISSION_SECRET_VALUE")
+                .expect("FISSION_SECRET_VALUE env var not set");
             entry.set_password(value.trim()).expect("could not write to keychain");
             println!("stored {name} ({} chars)", value.trim().len());
         }
