@@ -191,3 +191,17 @@ export function actionTargetThreadId(): ThreadId | null {
   const list = visibleThreads(mail);
   return list[mail.selectedIndex]?.id ?? null;
 }
+
+/** Bulk-aware targets: the open thread, else the multi-selection, else the
+ *  cursor row. Order follows the visible list so undo restores top-down. */
+export function actionTargetThreadIds(): ThreadId[] {
+  const mail = useMail.getState();
+  if (mail.openThreadId) return [mail.openThreadId];
+  if (mail.selectedIds.size > 0) {
+    return visibleThreads(mail)
+      .map((t) => t.id)
+      .filter((id) => mail.selectedIds.has(id));
+  }
+  const single = actionTargetThreadId();
+  return single ? [single] : [];
+}

@@ -10,10 +10,15 @@ interface MailState {
   done: Thread[];
   reminders: Thread[];
   starred: Thread[];
+  trash: Thread[];
+  /** Threads for the active "label:…" view. */
+  labelThreads: Thread[];
 
   listView: MailView;
   activeSplitId: string;
   selectedIndex: number;
+  /** Multi-select for bulk triage; cleared when the view changes. */
+  selectedIds: Set<ThreadId>;
 
   openThreadId: ThreadId | null;
   openMessages: Message[];
@@ -26,6 +31,10 @@ interface MailState {
   cycleSplit: (dir: 1 | -1) => void;
   select: (index: number) => void;
   moveSelection: (dir: 1 | -1) => void;
+  toggleSelected: (id: ThreadId) => void;
+  /** Ctrl+A: select the cursor row and everything below it. */
+  selectFromCursorDown: () => void;
+  clearSelection: () => void;
   openThread: (id: ThreadId) => Promise<void>;
   /** Re-read the open thread's messages (e.g. when inline images resolve). */
   refreshOpenThread: () => Promise<void>;
@@ -60,6 +69,8 @@ export function visibleThreads(s: MailState): Thread[] {
   if (s.listView === "inbox") return splitThreads(s.inbox, s.activeSplitId);
   if (s.listView === "done") return s.done;
   if (s.listView === "starred") return s.starred;
+  if (s.listView === "trash") return s.trash;
+  if (s.listView.startsWith("label:")) return s.labelThreads;
   return s.reminders;
 }
 
@@ -69,29 +80,51 @@ export const useMail = create<MailState>((set, get) => ({
   done: [],
   reminders: [],
   starred: [],
+  trash: [],
+  labelThreads: [],
   listView: "inbox",
   activeSplitId: "important",
   selectedIndex: 0,
+  selectedIds: new Set<ThreadId>(),
   openThreadId: null,
   openMessages: [],
   searchResults: [],
 
   refresh: async () => {
-    const [inbox, done, reminders, starred] = await Promise.all([
-      backend.listThreads("inbox"),
-      backend.listThreads("done"),
-      backend.listThreads("reminders"),
-      backend.listThreads("starred"),
-    ]);
-    set({ inbox, done, reminders, starred, loaded: true });
+    const labelView = get().listView.startsWith("label:") ? get().listView : null;
+    const [inbox, done, reminders, starred, trash, labelThreads] =
+      await Promise.all([
+        backend.listThreads("inbox"),
+        backend.listThreads("done"),
+        backend.listThreads("reminders"),
+        backend.listThreads("starred"),
+        backend.listThreads("trash"),
+        labelView ? backend.listThreads(labelView) : Promise.resolve([]),
+      ]);
+    set({ inbox, done, reminders, starred, trash, labelThreads, loaded: true });
     const s = get();
-    const max = visibleThreads(s).length - 1;
+    const visible = visibleThreads(s);
+    const max = visible.length - 1;
     if (s.selectedIndex > max) set({ selectedIndex: Math.max(0, max) });
+    // drop selections that no longer exist in the visible list
+    if (s.selectedIds.size > 0) {
+      const ids = new Set(visible.map((t) => t.id));
+      const pruned = new Set([...s.selectedIds].filter((id) => ids.has(id)));
+      if (pruned.size !== s.selectedIds.size) set({ selectedIds: pruned });
+    }
   },
 
-  setListView: (v) => set({ listView: v, selectedIndex: 0 }),
+  setListView: (v) => {
+    set({ listView: v, selectedIndex: 0, selectedIds: new Set(), labelThreads: [] });
+    if (v.startsWith("label:")) {
+      void backend.listThreads(v).then((labelThreads) => {
+        if (get().listView === v) set({ labelThreads });
+      });
+    }
+  },
 
-  setActiveSplit: (id) => set({ activeSplitId: id, selectedIndex: 0 }),
+  setActiveSplit: (id) =>
+    set({ activeSplitId: id, selectedIndex: 0, selectedIds: new Set() }),
 
   cycleSplit: (dir) => {
     const { settings } = useSettings.getState();
@@ -105,7 +138,7 @@ export const useMail = create<MailState>((set, get) => ({
     if (ids.length === 0) return;
     const cur = ids.indexOf(s.activeSplitId);
     const next = ids[(cur + dir + ids.length) % ids.length];
-    set({ activeSplitId: next, selectedIndex: 0 });
+    set({ activeSplitId: next, selectedIndex: 0, selectedIds: new Set() });
   },
 
   select: (index) => set({ selectedIndex: index }),
@@ -116,6 +149,23 @@ export const useMail = create<MailState>((set, get) => ({
     if (n === 0) return;
     set({ selectedIndex: Math.min(n - 1, Math.max(0, s.selectedIndex + dir)) });
   },
+
+  toggleSelected: (id) => {
+    const next = new Set(get().selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    set({ selectedIds: next });
+  },
+
+  selectFromCursorDown: () => {
+    const s = get();
+    const ids = visibleThreads(s)
+      .slice(s.selectedIndex)
+      .map((t) => t.id);
+    set({ selectedIds: new Set(ids) });
+  },
+
+  clearSelection: () => set({ selectedIds: new Set() }),
 
   openThread: async (id) => {
     // switch immediately so J/K feels instant; messages populate right after
@@ -173,17 +223,37 @@ export const useMail = create<MailState>((set, get) => ({
   },
 
   hide: async (id, reason) => {
-    set((s) => ({
-      inbox: s.inbox.filter((t) => t.id !== id),
-      done: s.done.filter((t) => t.id !== id),
-      reminders: s.reminders.filter((t) => t.id !== id),
-      starred: s.starred.filter((t) => t.id !== id),
-    }));
-    await backend.hideThread(id, reason);
+    set((s) => {
+      const t =
+        s.inbox.find((t) => t.id === id) ??
+        s.done.find((t) => t.id === id) ??
+        s.reminders.find((t) => t.id === id) ??
+        s.starred.find((t) => t.id === id) ??
+        s.labelThreads.find((t) => t.id === id);
+      return {
+        inbox: s.inbox.filter((t) => t.id !== id),
+        done: s.done.filter((t) => t.id !== id),
+        reminders: s.reminders.filter((t) => t.id !== id),
+        starred: s.starred.filter((t) => t.id !== id),
+        labelThreads: s.labelThreads.filter((t) => t.id !== id),
+        trash:
+          reason === "trash" && t
+            ? [{ ...t, inInbox: false }, ...s.trash]
+            : s.trash,
+      };
+    });
+    try {
+      await backend.hideThread(id, reason);
+    } catch (e) {
+      await get().refresh();
+      throw e;
+    }
   },
 
   restore: async (id) => {
-    // no cached copy to re-insert; the undo path refreshes after this resolves
+    // optimistic exit from the trash list; the undo/refresh path re-inserts
+    // it wherever it now belongs
+    set((s) => ({ trash: s.trash.filter((t) => t.id !== id) }));
     await backend.restoreThread(id);
   },
 

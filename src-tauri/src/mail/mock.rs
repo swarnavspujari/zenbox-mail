@@ -92,7 +92,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             id: "t-term-sheet",
             subject: "Term sheet — Series A close timing",
             starred: true,
-            labels: vec!["IMPORTANT"],
+            labels: vec!["IMPORTANT", "Deals"],
             in_inbox: true,
             account: A1,
             msgs: vec![
@@ -122,7 +122,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             id: "t-diligence",
             subject: "Diligence follow-ups from Tuesday's call",
             starred: false,
-            labels: vec!["IMPORTANT"],
+            labels: vec!["IMPORTANT", "Deals"],
             in_inbox: true,
             account: A1,
             msgs: vec![SeedMsg {
@@ -140,7 +140,7 @@ pub fn seed_if_empty(conn: &Connection) -> Result<(), String> {
             id: "t-board-deck",
             subject: "Q2 board deck — review draft",
             starred: false,
-            labels: vec!["IMPORTANT"],
+            labels: vec!["IMPORTANT", "LPs"],
             in_inbox: true,
             account: A1,
             msgs: vec![SeedMsg {

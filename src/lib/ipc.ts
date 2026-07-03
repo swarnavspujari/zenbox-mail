@@ -23,7 +23,13 @@ import type {
 } from "./types";
 import { MockBackend } from "./mock";
 
-export type MailView = "inbox" | "done" | "reminders" | "starred";
+export type MailView =
+  | "inbox"
+  | "done"
+  | "reminders"
+  | "starred"
+  | "trash"
+  | `label:${string}`;
 
 export interface BulkArchiveOpts {
   splitId: string | null; // null = whole inbox

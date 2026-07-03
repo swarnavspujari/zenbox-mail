@@ -90,6 +90,10 @@ function loadPersisted(): PersistedState {
       merged.settings.splits = merged.settings.splits.filter(
         (sp) => !(sp.builtin && sp.id === "calendar")
       );
+      // v0.9: Delete/Backspace joined "#" as trash defaults
+      if (merged.settings.shortcuts["thread.trash"] === "#") {
+        merged.settings.shortcuts["thread.trash"] = "#|delete|backspace";
+      }
       return merged;
     }
   } catch {
@@ -224,9 +228,17 @@ export class MockBackend implements Backend {
 
   async listThreads(view: MailView): Promise<Thread[]> {
     const byDate = (a: Thread, b: Thread) => b.lastDate - a.lastDate;
+    if (view === "trash")
+      return this.threads
+        .filter((t) => this.inActiveAccount(t) && this.hiddenOf(t.id) === "trash")
+        .sort(byDate);
     const mine = this.threads.filter(
       (t) => this.inActiveAccount(t) && this.hiddenOf(t.id) === null
     );
+    if (view.startsWith("label:")) {
+      const label = view.slice(6);
+      return mine.filter((t) => t.labels.includes(label)).sort(byDate);
+    }
     if (view === "inbox")
       return mine.filter((t) => t.inInbox && t.snoozedUntil === null).sort(byDate);
     if (view === "reminders")

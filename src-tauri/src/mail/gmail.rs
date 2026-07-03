@@ -59,6 +59,25 @@ impl GmailSession {
         })
     }
 
+    /// List every label as (id, name), refreshing the in-memory name→id map.
+    /// Sync persists these so opaque ids resolve to names on read.
+    pub async fn list_labels(
+        &mut self,
+        http: &reqwest::Client,
+    ) -> Result<Vec<(String, String)>, String> {
+        let v = self.get_json(http, &format!("{BASE}/labels")).await?;
+        let mut out = vec![];
+        if let Some(arr) = v["labels"].as_array() {
+            for l in arr {
+                if let (Some(n), Some(id)) = (l["name"].as_str(), l["id"].as_str()) {
+                    self.label_ids.insert(n.to_string(), id.to_string());
+                    out.push((id.to_string(), n.to_string()));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Resolve a label name to its Gmail id, creating the label if needed.
     /// System labels (INBOX, UNREAD, STARRED, IMPORTANT) are their own ids.
     pub async fn ensure_label_id(
@@ -70,14 +89,7 @@ impl GmailSession {
             return Ok(name.to_string());
         }
         if self.label_ids.is_empty() {
-            let v = self.get_json(http, &format!("{BASE}/labels")).await?;
-            if let Some(arr) = v["labels"].as_array() {
-                for l in arr {
-                    if let (Some(n), Some(id)) = (l["name"].as_str(), l["id"].as_str()) {
-                        self.label_ids.insert(n.to_string(), id.to_string());
-                    }
-                }
-            }
+            self.list_labels(http).await?;
         }
         if let Some(id) = self.label_ids.get(name) {
             return Ok(id.clone());

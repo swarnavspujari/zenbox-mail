@@ -99,6 +99,17 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
         );",
     )
     .map_err(|e| e.to_string())?;
+    // v0.9: Gmail label id → display name, refreshed on reconcile so opaque
+    // Label_… ids resolve to names on read.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS labels (
+            account_id TEXT NOT NULL,
+            id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            PRIMARY KEY (account_id, id)
+        );",
+    )
+    .map_err(|e| e.to_string())?;
     Ok(conn)
 }
 
@@ -171,7 +182,7 @@ pub fn default_settings() -> Settings {
         ("thread.move", "v"),
         ("thread.replyAll", "a"),
         ("thread.star", "s"),
-        ("thread.trash", "#"),
+        ("thread.trash", "#|delete|backspace"),
         ("thread.spam", "!"),
         ("thread.mute", "m"),
         ("thread.notDone", "shift+e"),
@@ -186,6 +197,7 @@ pub fn default_settings() -> Settings {
         ("goto.done", "g e"),
         ("goto.reminders", "g h"),
         ("goto.starred", "g s"),
+        ("goto.trash", "g t"),
         ("goto.drafts", "g d"),
         ("compose.ai", "mod+j"),
         ("compose.send", "mod+enter"),
@@ -194,7 +206,10 @@ pub fn default_settings() -> Settings {
         ("compose.snippet", "mod+;"),
         ("theme.toggle", ""),
         ("calendar.toggle", ""),
+        ("sidebar.toggle", ""),
         ("shortcutBar.toggle", ""),
+        ("list.selectAll", "mod+a"),
+        ("list.toggleSelect", "x"),
         ("thread.cycleSuggestion", "tab"),
         ("thread.scrollDown", "space"),
         ("back", "escape"),
@@ -272,6 +287,7 @@ pub fn default_settings() -> Settings {
         notifications: true,
         onboarded: false,
         calendar_open: false,
+        sidebar_open: false,
         show_shortcut_bar: true,
     }
 }
@@ -295,6 +311,13 @@ pub fn get_settings(conn: &Connection) -> Settings {
                     if *v == format!("mod+{n}") {
                         *v = format!("alt+{n}");
                     }
+                }
+            }
+            // v0.9: Delete/Backspace joined "#" as trash defaults. Upgrade
+            // saved copies still on the old default; custom remaps survive.
+            if let Some(v) = s.shortcuts.get_mut("thread.trash") {
+                if v == "#" {
+                    *v = "#|delete|backspace".into();
                 }
             }
             for p in defaults.providers {
@@ -358,18 +381,42 @@ fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
 const THREAD_COLS: &str = "id, subject, snippet, participants, message_count, last_date, unread, starred, labels, in_inbox, snoozed_until";
 
 pub fn list_threads(conn: &Connection, view: &str, account_id: &str) -> Result<Vec<Thread>, String> {
+    // Every view except trash hides soft-deleted rows; trash IS those rows.
     let where_clause = match view {
-        "inbox" => "in_inbox = 1 AND snoozed_until IS NULL",
-        "reminders" => "snoozed_until IS NOT NULL",
-        "starred" => "starred = 1",
-        _ => "in_inbox = 0 AND snoozed_until IS NULL",
+        "inbox" => "in_inbox = 1 AND snoozed_until IS NULL AND hidden IS NULL",
+        "reminders" => "snoozed_until IS NOT NULL AND hidden IS NULL",
+        "starred" => "starred = 1 AND hidden IS NULL",
+        "trash" => "hidden = 'trash'",
+        _ => "in_inbox = 0 AND snoozed_until IS NULL AND hidden IS NULL",
     };
     let sql = format!(
-        "SELECT {THREAD_COLS} FROM threads WHERE {where_clause} AND hidden IS NULL AND account_id = ?1 ORDER BY last_date DESC LIMIT 500"
+        "SELECT {THREAD_COLS} FROM threads WHERE {where_clause} AND account_id = ?1 ORDER BY last_date DESC LIMIT 500"
     );
     let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map(params![account_id], row_to_thread)
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(rows)
+}
+
+/// Threads carrying a label, by display name (json_each is quote-safe where
+/// a LIKE pattern is not).
+pub fn list_threads_by_label(
+    conn: &Connection,
+    label: &str,
+    account_id: &str,
+) -> Result<Vec<Thread>, String> {
+    let sql = format!(
+        "SELECT {THREAD_COLS} FROM threads
+         WHERE account_id = ?1 AND hidden IS NULL
+           AND EXISTS (SELECT 1 FROM json_each(threads.labels) WHERE json_each.value = ?2)
+         ORDER BY last_date DESC LIMIT 500"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![account_id, label], row_to_thread)
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
@@ -628,6 +675,14 @@ pub fn set_hidden(conn: &Connection, id: &str, reason: Option<&str>) -> Result<(
         ),
     }
     .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Sync-side unhide: clears the flag without forcing in_inbox back on —
+/// the listing diff owns where a restored thread actually lives.
+pub fn clear_hidden(conn: &Connection, id: &str) -> Result<(), String> {
+    conn.execute("UPDATE threads SET hidden = NULL WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -906,6 +961,79 @@ pub fn toggle_label(conn: &Connection, id: &str, label: &str) -> Result<bool, St
     )
     .map_err(|e| e.to_string())?;
     Ok(added)
+}
+
+/// Refresh the persisted id→name label map for one account.
+pub fn upsert_labels(
+    conn: &Connection,
+    account_id: &str,
+    pairs: &[(String, String)],
+) -> Result<(), String> {
+    for (id, name) in pairs {
+        conn.execute(
+            "INSERT INTO labels(account_id, id, name) VALUES(?1, ?2, ?3)
+             ON CONFLICT(account_id, id) DO UPDATE SET name = excluded.name",
+            params![account_id, id, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// id → display name for one account's Gmail labels.
+pub fn label_map(conn: &Connection, account_id: &str) -> HashMap<String, String> {
+    let Ok(mut stmt) = conn.prepare("SELECT id, name FROM labels WHERE account_id = ?1") else {
+        return HashMap::new();
+    };
+    stmt.query_map(params![account_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+}
+
+/// One-time repair: rewrite opaque label ids already persisted in
+/// threads.labels to their display names (older syncs stored ids verbatim).
+pub fn rename_thread_labels(
+    conn: &Connection,
+    account_id: &str,
+    map: &HashMap<String, String>,
+) -> Result<bool, String> {
+    if map.is_empty() {
+        return Ok(false);
+    }
+    let mut stmt = conn
+        .prepare("SELECT id, labels FROM threads WHERE account_id = ?1")
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map(params![account_id], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    let mut changed = false;
+    for (id, raw) in rows {
+        let Ok(labels) = serde_json::from_str::<Vec<String>>(&raw) else { continue };
+        let renamed: Vec<String> =
+            labels.iter().map(|l| map.get(l).unwrap_or(l).clone()).collect();
+        if renamed != labels {
+            let json = serde_json::to_string(&renamed).map_err(|e| e.to_string())?;
+            conn.execute("UPDATE threads SET labels = ?2 WHERE id = ?1", params![id, json])
+                .map_err(|e| e.to_string())?;
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+/// Locally-trashed thread ids for one account (sync diffs these against the
+/// server's in:trash listing).
+pub fn trashed_thread_ids(conn: &Connection, account_id: &str) -> Vec<String> {
+    let Ok(mut stmt) =
+        conn.prepare("SELECT id FROM threads WHERE account_id = ?1 AND hidden = 'trash'")
+    else {
+        return vec![];
+    };
+    stmt.query_map(params![account_id], |r| r.get(0))
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
 }
 
 pub fn list_labels(conn: &Connection) -> Result<Vec<String>, String> {

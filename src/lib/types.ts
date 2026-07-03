@@ -107,6 +107,8 @@ export interface Settings {
   onboarded: boolean;
   /** Calendar side panel visible. */
   calendarOpen: boolean;
+  /** Folder/label sidebar visible. */
+  sidebarOpen: boolean;
   /** Bottom shortcut-hint footer visible (default true). */
   showShortcutBar: boolean;
 }

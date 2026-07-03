@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { backend } from "@/lib/ipc";
+import { runCommandById } from "@/lib/commands";
 import { splitThreads, useMail } from "@/stores/mail";
 import { useSettings } from "@/stores/settings";
 import { CalendarPanel } from "@/features/calendar/CalendarPanel";
+import { FolderSidebar } from "@/components/FolderSidebar";
 import type { Thread } from "@/lib/types";
 
 function timeLabel(ms: number): string {
@@ -11,8 +13,6 @@ function timeLabel(ms: number): string {
   const sameDay = d.toDateString() === now.toDateString();
   if (sameDay)
     return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  const days = (now.getTime() - ms) / 86_400_000;
-  if (days < 7) return d.toLocaleDateString(undefined, { weekday: "short" });
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
@@ -113,10 +113,12 @@ function Row({
   t,
   index,
   selected,
+  checked,
 }: {
   t: Thread;
   index: number;
   selected: boolean;
+  checked: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -127,19 +129,29 @@ function Row({
   return (
     <div
       ref={ref}
-      onClick={() => {
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey) {
+          useMail.getState().toggleSelected(t.id);
+          return;
+        }
         useMail.getState().select(index);
         void useMail.getState().openThread(t.id);
       }}
       className={`flex cursor-pointer items-center gap-3 border-b border-line px-4 py-[10px] ${
-        selected ? "bg-selected" : "hover:bg-hover"
+        selected ? "bg-selected" : checked ? "bg-accent-dim" : "hover:bg-hover"
       }`}
     >
-      <div
-        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-          t.unread ? "bg-accent-strong" : "bg-transparent"
-        }`}
-      />
+      {checked ? (
+        <div className="flex h-1.5 w-1.5 shrink-0 items-center justify-center text-[11px] leading-none text-accent-strong">
+          ✓
+        </div>
+      ) : (
+        <div
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+            t.unread ? "bg-accent-strong" : "bg-transparent"
+          }`}
+        />
+      )}
       <div className="w-44 shrink-0 truncate">
         <span
           className={
@@ -179,26 +191,66 @@ function Row({
   );
 }
 
+function BulkBar({ count }: { count: number }) {
+  return (
+    <div className="zb-fade-in flex items-center gap-2 border-b border-line bg-accent-dim px-4 py-1.5 text-[12.5px] text-ink">
+      <span className="font-medium">{count} selected</span>
+      <div className="flex-1" />
+      <button
+        className="rounded-md border border-line-strong px-2.5 py-0.5 hover:bg-hover"
+        onClick={() => runCommandById("thread.done")}
+      >
+        Mark Done <span className="kbd">E</span>
+      </button>
+      <button
+        className="rounded-md border border-line-strong px-2.5 py-0.5 hover:bg-hover"
+        onClick={() => runCommandById("thread.trash")}
+      >
+        Trash <span className="kbd">#</span>
+      </button>
+      <button
+        className="rounded-md border border-line-strong px-2.5 py-0.5 hover:bg-hover"
+        onClick={() => runCommandById("thread.move")}
+      >
+        Label <span className="kbd">V</span>
+      </button>
+      <button
+        className="rounded-md px-2 py-0.5 text-ink-3 hover:bg-hover hover:text-ink"
+        onClick={() => useMail.getState().clearSelection()}
+        title="Clear selection (Esc)"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 export function MailScreen() {
   const listView = useMail((s) => s.listView);
   const inbox = useMail((s) => s.inbox);
   const done = useMail((s) => s.done);
   const reminders = useMail((s) => s.reminders);
   const starred = useMail((s) => s.starred);
+  const trash = useMail((s) => s.trash);
+  const labelThreads = useMail((s) => s.labelThreads);
   const activeSplitId = useMail((s) => s.activeSplitId);
   const selectedIndex = useMail((s) => s.selectedIndex);
+  const selectedIds = useMail((s) => s.selectedIds);
   const splits = useSettings((s) => s.settings.splits);
   const calendarOpen = useSettings((s) => s.settings.calendarOpen);
+  const sidebarOpen = useSettings((s) => s.settings.sidebarOpen);
   const loaded = useMail((s) => s.loaded);
 
   const threads = useMemo(() => {
     if (listView === "inbox") return splitThreads(inbox, activeSplitId);
     if (listView === "done") return done;
     if (listView === "starred") return starred;
+    if (listView === "trash") return trash;
+    if (listView.startsWith("label:")) return labelThreads;
     return reminders;
     // splits is a dependency because splitThreads reads it via settings
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listView, inbox, done, reminders, starred, activeSplitId, splits]);
+  }, [listView, inbox, done, reminders, starred, trash, labelThreads, activeSplitId, splits]);
 
   const title =
     listView === "inbox"
@@ -207,10 +259,17 @@ export function MailScreen() {
         ? "Done"
         : listView === "starred"
           ? "Starred"
-          : "Reminders";
+          : listView === "trash"
+            ? "Trash"
+            : listView === "reminders"
+              ? "Reminders"
+              : listView.startsWith("label:")
+                ? listView.slice(6)
+                : listView;
 
   return (
     <div className="flex h-full">
+      {sidebarOpen && <FolderSidebar />}
       <div className="flex min-w-0 flex-1 flex-col">
         {listView === "inbox" ? (
           <SplitTabs />
@@ -224,9 +283,16 @@ export function MailScreen() {
             <CalendarToggle />
           </div>
         )}
+        {selectedIds.size > 0 && <BulkBar count={selectedIds.size} />}
         <div className="min-h-0 flex-1 overflow-y-auto">
           {threads.map((t, i) => (
-            <Row key={t.id} t={t} index={i} selected={i === selectedIndex} />
+            <Row
+              key={t.id}
+              t={t}
+              index={i}
+              selected={i === selectedIndex}
+              checked={selectedIds.has(t.id)}
+            />
           ))}
           {loaded && threads.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-ink-3">

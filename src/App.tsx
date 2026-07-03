@@ -126,6 +126,16 @@ export default function App() {
   return (
     <div className="flex h-full flex-col bg-base">
       <header className="flex h-12 shrink-0 items-center gap-3 bg-base px-4">
+        <button
+          className="rounded px-1.5 py-0.5 text-[15px] text-ink-3 hover:bg-hover hover:text-ink"
+          onClick={() => {
+            const s = useSettings.getState();
+            void s.save({ sidebarOpen: !s.settings.sidebarOpen });
+          }}
+          title="Toggle folder sidebar"
+        >
+          ☰
+        </button>
         <span className="flex items-center gap-2.5">
           <span className="inline-block h-[15px] w-[15px] rotate-45 rounded-[4px] bg-accent" />
           <span className="text-[15px] font-semibold tracking-tight text-ink">

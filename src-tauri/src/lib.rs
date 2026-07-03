@@ -437,7 +437,17 @@ async fn resync_account(app: AppHandle, state: State<'_, AppState>) -> Result<()
 
 #[tauri::command]
 fn list_threads(state: State<'_, AppState>, view: String) -> Result<Vec<Thread>, String> {
-    if !matches!(view.as_str(), "inbox" | "done" | "reminders" | "starred") {
+    // "label:<name>" scopes the list to one label; everything else is a
+    // fixed view.
+    if let Some(label) = view.strip_prefix("label:") {
+        if label.is_empty() || label.len() > 100 {
+            return Err("invalid label".into());
+        }
+        let conn = state.db.lock().unwrap();
+        let active = store::get_accounts(&conn).active;
+        return store::list_threads_by_label(&conn, label, &active);
+    }
+    if !matches!(view.as_str(), "inbox" | "done" | "reminders" | "starred" | "trash") {
         return Err("invalid view".into());
     }
     let conn = state.db.lock().unwrap();

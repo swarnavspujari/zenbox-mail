@@ -8,6 +8,7 @@ import { useMail } from "@/stores/mail";
 import { activeSignature, useSettings } from "@/stores/settings";
 import {
   actionTargetThreadId,
+  actionTargetThreadIds,
   useUi,
   type ComposeState,
 } from "@/stores/ui";
@@ -119,6 +120,11 @@ export function pushTriageUndo(label: string, inverse: () => Promise<void>) {
   });
 }
 
+/** "Mark Done" or "Mark Done (12)" — bulk actions label their undo entry. */
+function bulkLabel(base: string, n: number): string {
+  return n > 1 ? `${base} (${n})` : base;
+}
+
 // ---- the registry -----------------------------------------------------------
 
 export function allCommands(): Command[] {
@@ -154,12 +160,16 @@ export function allCommands(): Command[] {
       group: "Triage",
       when: () => hasTarget() && !inCompose(),
       run: async () => {
-        const id = actionTargetThreadId();
-        if (!id) return;
-        if (mail().openThreadId === id) mail().closeThread();
-        await mail().archive(id);
-        pushTriageUndo("Mark Done", () => mail().moveToInbox(id));
-        ui().showToast("Done");
+        const ids = actionTargetThreadIds();
+        if (ids.length === 0) return;
+        if (ids.includes(mail().openThreadId ?? "")) mail().closeThread();
+        for (const id of ids) await mail().archive(id);
+        mail().clearSelection();
+        const label = bulkLabel("Mark Done", ids.length);
+        pushTriageUndo(label, async () => {
+          for (const id of ids) await mail().moveToInbox(id);
+        });
+        ui().showToast(ids.length > 1 ? `Done — ${ids.length} conversations` : "Done");
         await ui().checkInboxZero();
       },
     },
@@ -169,26 +179,47 @@ export function allCommands(): Command[] {
       group: "Triage",
       when: () => hasTarget() && !inCompose() && mail().listView !== "inbox",
       run: async () => {
-        const id = actionTargetThreadId();
-        if (!id) return;
-        if (mail().openThreadId === id) mail().closeThread();
-        await mail().moveToInbox(id);
-        pushTriageUndo("Mark Not Done", () => mail().archive(id));
-        ui().showToast("Moved to inbox");
+        const ids = actionTargetThreadIds();
+        if (ids.length === 0) return;
+        if (ids.includes(mail().openThreadId ?? "")) mail().closeThread();
+        // In Trash, "not done" means restore (unhide + back to inbox).
+        const fromTrash = mail().listView === "trash";
+        for (const id of ids) {
+          if (fromTrash) await mail().restore(id);
+          else await mail().moveToInbox(id);
+        }
+        mail().clearSelection();
+        if (fromTrash) await mail().refresh();
+        const label = bulkLabel(fromTrash ? "Restore" : "Mark Not Done", ids.length);
+        pushTriageUndo(label, async () => {
+          for (const id of ids) {
+            if (fromTrash) await mail().hide(id, "trash");
+            else await mail().archive(id);
+          }
+        });
+        ui().showToast(fromTrash ? "Restored" : "Moved to inbox");
       },
     },
     {
       id: "thread.trash",
       title: "Trash",
       group: "Triage",
-      when: () => hasTarget() && !inCompose(),
+      when: () => hasTarget() && !inCompose() && mail().listView !== "trash",
       run: async () => {
-        const id = actionTargetThreadId();
-        if (!id) return;
-        if (mail().openThreadId === id) mail().closeThread();
-        await mail().hide(id, "trash");
-        pushTriageUndo("Trash", () => mail().restore(id));
-        ui().showToast("Moved to trash — Z to undo");
+        const ids = actionTargetThreadIds();
+        if (ids.length === 0) return;
+        if (ids.includes(mail().openThreadId ?? "")) mail().closeThread();
+        for (const id of ids) await mail().hide(id, "trash");
+        mail().clearSelection();
+        const label = bulkLabel("Trash", ids.length);
+        pushTriageUndo(label, async () => {
+          for (const id of ids) await mail().restore(id);
+        });
+        ui().showToast(
+          ids.length > 1
+            ? `Moved ${ids.length} to trash — Z to undo`
+            : "Moved to trash — Z to undo"
+        );
         await ui().checkInboxZero();
       },
     },
@@ -470,11 +501,44 @@ export function allCommands(): Command[] {
       },
     },
     {
+      id: "goto.trash",
+      title: "Go to Trash",
+      group: "Navigate",
+      when: () => !inCompose(),
+      run: () => {
+        mail().closeThread();
+        mail().setListView("trash");
+        ui().setScreen("mail");
+      },
+    },
+    {
       id: "goto.drafts",
       title: "Drafts…",
       group: "Navigate",
       when: () => !inCompose(),
       run: () => ui().openPicker("drafts"),
+    },
+    {
+      id: "list.selectAll",
+      title: "Select All From Here Down",
+      group: "Triage",
+      when: () => inList(),
+      run: () => {
+        mail().selectFromCursorDown();
+        const n = mail().selectedIds.size;
+        if (n > 0) ui().showToast(`${n} selected — E done · # trash · V label`);
+      },
+    },
+    {
+      id: "list.toggleSelect",
+      title: "Select / Deselect Conversation",
+      group: "Triage",
+      hidden: true,
+      when: () => inList(),
+      run: () => {
+        const id = actionTargetThreadId();
+        if (id) mail().toggleSelected(id);
+      },
     },
     {
       id: "compose.ai",
@@ -537,6 +601,15 @@ export function allCommands(): Command[] {
       run: () => {
         const s = useSettings.getState();
         void s.save({ calendarOpen: !s.settings.calendarOpen });
+      },
+    },
+    {
+      id: "sidebar.toggle",
+      title: "Toggle Folder Sidebar",
+      group: "Navigate",
+      run: () => {
+        const s = useSettings.getState();
+        void s.save({ sidebarOpen: !s.settings.sidebarOpen });
       },
     },
     {
@@ -628,6 +701,8 @@ export function allCommands(): Command[] {
         const u = ui();
         if (u.askAiOpen) return u.setAskAiOpen(false);
         if (u.aiBarOpen) return u.setAiBarOpen(false);
+        if (inList() && mail().selectedIds.size > 0)
+          return mail().clearSelection();
         if (u.compose) {
           // Esc keeps your work: flush a final draft save, then close.
           const c = u.compose;
@@ -666,6 +741,12 @@ useSettings.subscribe((state, prev) => {
     bindingsCache = null;
   }
 });
+
+/** Run a registered command from UI chrome (bulk bar buttons, sidebar). */
+export function runCommandById(id: string) {
+  const c = allCommands().find((c) => c.id === id);
+  if (c && (!c.when || c.when())) runCommand(c);
+}
 
 /** Run a command, surfacing any rejection as a toast instead of silence. */
 export function runCommand(c: Command) {

@@ -16,6 +16,7 @@ use std::collections::HashSet;
 
 const INBOX_BACKFILL: usize = 500;
 const DONE_BACKFILL: usize = 200;
+const TRASH_BACKFILL: usize = 100;
 
 fn history_key(account_id: &str) -> String {
     format!("history:{account_id}")
@@ -130,6 +131,13 @@ async fn reconcile(
     account_id: &str,
     key: &str,
 ) -> Result<bool, String> {
+    // Captured BEFORE the listings so a thread the user trashes mid-reconcile
+    // isn't mistaken for a server-side restore and resurrected below.
+    let locally_trashed: Vec<String> = {
+        let conn = db.lock().unwrap();
+        store::trashed_thread_ids(&conn, account_id)
+    };
+
     let prof = session.profile(http).await?;
     let baseline = prof["historyId"]
         .as_str()
@@ -137,21 +145,39 @@ async fn reconcile(
         .or_else(|| prof["historyId"].as_u64().map(|n| n.to_string()))
         .unwrap_or_default();
 
+    // Refresh the label id→name map; older syncs stored opaque ids in
+    // threads.labels, so repair those rows once the map is known.
+    let mut changed = false;
+    match session.list_labels(http).await {
+        Ok(pairs) => {
+            let conn = db.lock().unwrap();
+            store::upsert_labels(&conn, account_id, &pairs)?;
+            let map = store::label_map(&conn, account_id);
+            changed |= store::rename_thread_labels(&conn, account_id, &map)?;
+        }
+        Err(e) => eprintln!("[sync:{account_id}] label listing failed: {e}"),
+    }
+
     let inbox = session
         .list_thread_ids_paged(http, "in:inbox", INBOX_BACKFILL)
         .await?;
     let done = session
         .list_thread_ids_paged(http, "-in:inbox -in:spam -in:trash -in:draft", DONE_BACKFILL)
         .await?;
+    let trash = session
+        .list_thread_ids_paged(http, "in:trash", TRASH_BACKFILL)
+        .await?;
 
     let inbox_ids: HashSet<&str> = inbox.iter().map(|(id, _)| id.as_str()).collect();
-    let mut changed = false;
+    let live_ids: HashSet<&str> =
+        inbox.iter().chain(done.iter()).map(|(id, _)| id.as_str()).collect();
+    let trash_ids: HashSet<&str> = trash.iter().map(|(id, _)| id.as_str()).collect();
 
     // Which threads need a full fetch? New ones and ones whose historyId moved.
     let mut to_fetch: Vec<String> = vec![];
     {
         let conn = db.lock().unwrap();
-        for (id, history_id) in inbox.iter().chain(done.iter()) {
+        for (id, history_id) in inbox.iter().chain(done.iter()).chain(trash.iter()) {
             let known: Option<String> = conn
                 .query_row(
                     "SELECT COALESCE(history_id, '') FROM threads WHERE id = ?1",
@@ -187,6 +213,34 @@ async fn reconcile(
             // and re-runs the full listing every cycle (same rationale as
             // incremental's log-and-continue).
             Err(e) => eprintln!("[sync:{account_id}] reconcile refetch {id} failed: {e}"),
+        }
+    }
+
+    // Two-way trash: threads the server has in trash get hidden locally
+    // (upsert never touches the hidden column), and threads restored on the
+    // server side come back out. Gmail's "empty trash" deletes threads, which
+    // the refetch 404 path above already drops.
+    {
+        let conn = db.lock().unwrap();
+        for (id, _) in &trash {
+            if store::get_thread(&conn, id).is_some()
+                && store::hidden_reason(&conn, id).as_deref() != Some("trash")
+            {
+                store::set_hidden(&conn, id, Some("trash"))?;
+                changed = true;
+            }
+        }
+        // Restore only threads the server affirmatively lists live again —
+        // absence from the (capped) trash listing alone isn't proof.
+        for id in &locally_trashed {
+            if !id.starts_with("t-")
+                && !id.starts_with("t2-")
+                && !trash_ids.contains(id.as_str())
+                && live_ids.contains(id.as_str())
+            {
+                store::clear_hidden(&conn, id)?;
+                changed = true;
+            }
         }
     }
 
@@ -237,9 +291,20 @@ pub async fn refetch_thread(
                 .map(|ls| ls.iter().any(|l| l.as_str() == Some("INBOX")))
                 .unwrap_or(false)
         });
-    let (thread, msgs) = thread_from_json(id, &v, in_inbox);
+    let (mut thread, msgs) = thread_from_json(id, &v, in_inbox);
     {
         let conn = db.lock().unwrap();
+        // Gmail sends user labels as opaque ids — resolve them to display
+        // names via the map persisted at reconcile (unknown ids pass through
+        // until the next label listing catches up).
+        let label_names = store::label_map(&conn, account_id);
+        if !label_names.is_empty() {
+            thread.labels = thread
+                .labels
+                .iter()
+                .map(|l| label_names.get(l).unwrap_or(l).clone())
+                .collect();
+        }
         // A snoozed thread that grew a new message wakes up immediately.
         let existing = store::get_thread(&conn, id);
         let was_snoozed = existing.as_ref().and_then(|t| t.snoozed_until).is_some();
