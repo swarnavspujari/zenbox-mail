@@ -180,8 +180,14 @@ async fn reconcile(
     }
 
     for id in to_fetch {
-        refetch_thread(http, session, db, account_id, &id).await?;
-        changed = true;
+        match refetch_thread(http, session, db, account_id, &id).await {
+            Ok(_) => changed = true,
+            // One poison thread must not abort the pass and skip storing the
+            // baseline below — otherwise the account never advances off reconcile
+            // and re-runs the full listing every cycle (same rationale as
+            // incremental's log-and-continue).
+            Err(e) => eprintln!("[sync:{account_id}] reconcile refetch {id} failed: {e}"),
+        }
     }
 
     if !baseline.is_empty() {
@@ -237,10 +243,22 @@ pub async fn refetch_thread(
         // A snoozed thread that grew a new message wakes up immediately.
         let existing = store::get_thread(&conn, id);
         let was_snoozed = existing.as_ref().and_then(|t| t.snoozed_until).is_some();
+        // The local "Muted" marker is a display name; Gmail stores user labels as
+        // opaque ids, so a refetch's labels=excluded.labels overwrites it. Remember
+        // it and re-assert below so muted_inbox_threads keeps matching and new
+        // replies to a muted thread are still auto-archived.
+        let was_muted = existing
+            .as_ref()
+            .map(|t| t.labels.iter().any(|l| l == "Muted"))
+            .unwrap_or(false);
         let grew = existing
+            .as_ref()
             .map(|t| t.message_count < thread.message_count)
             .unwrap_or(false);
         store::upsert_thread(&conn, account_id, &thread, &msgs)?;
+        if was_muted {
+            let _ = store::toggle_label(&conn, id, "Muted");
+        }
         if was_snoozed && !grew {
             // keep the local snooze: sync would otherwise resurface it
             conn.execute(
