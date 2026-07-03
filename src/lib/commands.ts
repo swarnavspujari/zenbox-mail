@@ -4,6 +4,7 @@ import { backend } from "./ipc";
 import { useUpdater } from "./updater";
 import type { Binding } from "./keyboard";
 import { popUndo, pushUndo } from "./undo";
+import { useCalendar } from "@/stores/calendar";
 import { useMail } from "@/stores/mail";
 import { activeSignature, useSettings } from "@/stores/settings";
 import {
@@ -34,6 +35,14 @@ const onMailScreen = () => ui().screen === "mail" && !inCompose();
 const inThread = () => onMailScreen() && mail().openThreadId !== null;
 const inList = () => onMailScreen() && mail().openThreadId === null;
 const hasTarget = () => actionTargetThreadId() !== null;
+/** ←/→ move calendar days only when the calendar owns focus: the week view
+ *  screen, or the day panel while it is open and focused — never the list. */
+const calendarFocused = () =>
+  !inCompose() &&
+  (ui().screen === "calendar" ||
+    (ui().screen === "mail" &&
+      useSettings.getState().settings.calendarOpen &&
+      ui().focusRegion === "calendar"));
 
 // ---- compose helpers --------------------------------------------------------
 
@@ -600,8 +609,43 @@ export function allCommands(): Command[] {
       group: "Navigate",
       run: () => {
         const s = useSettings.getState();
-        void s.save({ calendarOpen: !s.settings.calendarOpen });
+        const opening = !s.settings.calendarOpen;
+        void s.save({ calendarOpen: opening });
+        ui().setFocusRegion(opening ? "calendar" : "mail");
       },
+    },
+    {
+      id: "calendar.open",
+      title: "Go to Calendar (week view)",
+      group: "Navigate",
+      when: () => !inCompose(),
+      run: () => {
+        mail().closeThread();
+        ui().setScreen("calendar");
+      },
+    },
+    {
+      id: "calendar.prevDay",
+      title: "Calendar: Previous Day",
+      group: "Navigate",
+      hidden: true,
+      when: () => calendarFocused(),
+      run: () => useCalendar.getState().shiftDay(-1),
+    },
+    {
+      id: "calendar.nextDay",
+      title: "Calendar: Next Day",
+      group: "Navigate",
+      hidden: true,
+      when: () => calendarFocused(),
+      run: () => useCalendar.getState().shiftDay(1),
+    },
+    {
+      id: "calendar.today",
+      title: "Calendar: Today",
+      group: "Navigate",
+      when: () => calendarFocused(),
+      run: () => useCalendar.getState().goToday(),
     },
     {
       id: "sidebar.toggle",

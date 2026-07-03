@@ -106,6 +106,12 @@ impl GmailSession {
         Ok(id)
     }
 
+    /// A fresh bearer token for callers that issue their own requests (the
+    /// calendar fetch resolves it once, then hits N calendars concurrently).
+    pub(crate) async fn bearer(&mut self, http: &reqwest::Client) -> Result<String, String> {
+        self.token(http).await
+    }
+
     async fn token(&mut self, http: &reqwest::Client) -> Result<String, String> {
         if let Some((tok, until)) = &self.access_token {
             if Instant::now() < *until {

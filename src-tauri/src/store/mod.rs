@@ -110,6 +110,24 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
         );",
     )
     .map_err(|e| e.to_string())?;
+    // v0.9: local-first calendar — events cache read by the panel/week view,
+    // refreshed in the background (mirrors the mail read/sync split).
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS events (
+            account_id TEXT NOT NULL,
+            id TEXT NOT NULL,
+            calendar TEXT NOT NULL DEFAULT '',
+            color TEXT,
+            title TEXT NOT NULL DEFAULT '',
+            start_ms INTEGER NOT NULL,
+            end_ms INTEGER NOT NULL,
+            all_day INTEGER NOT NULL DEFAULT 0,
+            location TEXT,
+            PRIMARY KEY (account_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_events_time ON events(account_id, start_ms);",
+    )
+    .map_err(|e| e.to_string())?;
     Ok(conn)
 }
 
@@ -206,6 +224,10 @@ pub fn default_settings() -> Settings {
         ("compose.snippet", "mod+;"),
         ("theme.toggle", ""),
         ("calendar.toggle", ""),
+        ("calendar.open", "g c"),
+        ("calendar.prevDay", "left"),
+        ("calendar.nextDay", "right"),
+        ("calendar.today", ""),
         ("sidebar.toggle", ""),
         ("shortcutBar.toggle", ""),
         ("list.selectAll", "mod+a"),
@@ -1034,6 +1056,75 @@ pub fn trashed_thread_ids(conn: &Connection, account_id: &str) -> Vec<String> {
     stmt.query_map(params![account_id], |r| r.get(0))
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
         .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------- calendar
+
+/// Cached events overlapping [start_ms, end_ms), sorted by start.
+pub fn list_events(
+    conn: &Connection,
+    account_id: &str,
+    start_ms: i64,
+    end_ms: i64,
+) -> Vec<CalendarEvent> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT id, calendar, color, title, start_ms, end_ms, all_day, location
+         FROM events
+         WHERE account_id = ?1 AND start_ms < ?3 AND end_ms > ?2
+         ORDER BY start_ms",
+    ) else {
+        return vec![];
+    };
+    stmt.query_map(params![account_id, start_ms, end_ms], |r| {
+        Ok(CalendarEvent {
+            id: r.get(0)?,
+            calendar: r.get(1)?,
+            color: r.get(2)?,
+            title: r.get(3)?,
+            start_ms: r.get(4)?,
+            end_ms: r.get(5)?,
+            all_day: r.get::<_, i64>(6)? != 0,
+            location: r.get(7)?,
+        })
+    })
+    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .unwrap_or_default()
+}
+
+/// Replace the cached events for one fetched window: everything overlapping
+/// the window is dropped, then the fresh listing is inserted.
+pub fn replace_events(
+    conn: &Connection,
+    account_id: &str,
+    window_start: i64,
+    window_end: i64,
+    events: &[CalendarEvent],
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM events WHERE account_id = ?1 AND start_ms < ?3 AND end_ms > ?2",
+        params![account_id, window_start, window_end],
+    )
+    .map_err(|e| e.to_string())?;
+    for e in events {
+        conn.execute(
+            "INSERT OR REPLACE INTO events
+                (account_id, id, calendar, color, title, start_ms, end_ms, all_day, location)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                account_id,
+                e.id,
+                e.calendar,
+                e.color,
+                e.title,
+                e.start_ms,
+                e.end_ms,
+                e.all_day as i64,
+                e.location
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 pub fn list_labels(conn: &Connection) -> Result<Vec<String>, String> {

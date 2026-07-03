@@ -95,8 +95,11 @@ export interface Backend {
   getProfile(email: string): Promise<ProfileInfo | null>;
   /** Override (or clear with null) the header photo. data: URI expected. */
   setProfilePhoto(email: string, picture: string | null): Promise<void>;
-  /** Calendar events for the side panel, [startMs, endMs). */
+  /** Calendar events for the side panel / week view, [startMs, endMs).
+   *  Local-first: reads the SQLite cache; refreshCalendar repopulates it. */
   listEvents(startMs: number, endMs: number): Promise<CalendarEvent[]>;
+  /** Kick a background fetch of fresh events around the range (throttled). */
+  refreshCalendar(startMs: number, endMs: number): Promise<void>;
 
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
@@ -115,6 +118,8 @@ export interface Backend {
 
   /** Backend pushes when sync/reminders change mail state. Returns unsubscribe. */
   onMailUpdated(cb: () => void): () => void;
+  /** Fires when a calendar refresh lands (payload = error message or null). */
+  onCalendarUpdated(cb: (error: string | null) => void): () => void;
   /** Fires when an opened thread's inline images finish resolving (threadId). */
   onThreadImages(cb: (threadId: string) => void): () => void;
   /** Fires when a background triage sync to Gmail failed (message). */
@@ -237,6 +242,9 @@ class TauriBackend implements Backend {
   listEvents(startMs: number, endMs: number) {
     return invoke<CalendarEvent[]>("list_events", { startMs, endMs });
   }
+  refreshCalendar(startMs: number, endMs: number) {
+    return invoke<void>("refresh_calendar", { startMs, endMs });
+  }
   getSettings() {
     return invoke<Settings>("get_settings");
   }
@@ -290,6 +298,12 @@ class TauriBackend implements Backend {
   }
   onMailUpdated(cb: () => void): () => void {
     const un = listen("mail:updated", cb);
+    return () => {
+      void un.then((f) => f());
+    };
+  }
+  onCalendarUpdated(cb: (error: string | null) => void): () => void {
+    const un = listen<string | null>("calendar:updated", (e) => cb(e.payload));
     return () => {
       void un.then((f) => f());
     };

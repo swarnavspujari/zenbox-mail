@@ -5,6 +5,7 @@ import { splitThreads, useMail } from "@/stores/mail";
 import { useSettings } from "@/stores/settings";
 import { CalendarPanel } from "@/features/calendar/CalendarPanel";
 import { FolderSidebar } from "@/components/FolderSidebar";
+import { useUi } from "@/stores/ui";
 import { IconButton } from "@/components/Button";
 import { Label } from "@/components/Label";
 import type { Thread } from "@/lib/types";
@@ -49,7 +50,11 @@ function CalendarToggle() {
 
   return (
     <button
-      onClick={() => void useSettings.getState().save({ calendarOpen: !open })}
+      onClick={() => {
+        const next = !open;
+        void useSettings.getState().save({ calendarOpen: next });
+        useUi.getState().setFocusRegion(next ? "calendar" : "mail");
+      }}
       className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[12px] transition-colors ${
         open
           ? "border-accent/50 bg-accent-dim text-ink"
@@ -314,7 +319,10 @@ export function MailScreen() {
   return (
     <div className="flex h-full">
       {sidebarOpen && <FolderSidebar />}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div
+        className="flex min-w-0 flex-1 flex-col"
+        onMouseDown={() => useUi.getState().setFocusRegion("mail")}
+      >
         {listView === "inbox" ? (
           <SplitTabs />
         ) : (

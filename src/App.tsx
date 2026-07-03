@@ -11,6 +11,8 @@ import { IconButton } from "@/components/Button";
 import { NavRail } from "@/components/NavRail";
 import { UndoToast } from "@/components/UndoToast";
 import { MailScreen } from "@/features/inbox/MailScreen";
+import { CalendarWeek } from "@/features/calendar/CalendarWeek";
+import { useCalendar } from "@/stores/calendar";
 import { ThreadView } from "@/features/thread/ThreadView";
 import { Compose } from "@/features/compose/Compose";
 import { CommandPalette } from "@/features/palette/CommandPalette";
@@ -99,12 +101,17 @@ export default function App() {
     );
     // general core notices (e.g. a partial OAuth grant at connect time)
     const unNotice = backend.onNotice((msg) => useUi.getState().showToast(msg));
+    // a background calendar refresh landed — repaint from cache / show why not
+    const unCalendar = backend.onCalendarUpdated((err) =>
+      useCalendar.getState().handleUpdated(err)
+    );
     return () => {
       clearTimeout(timer);
       unMail();
       unImages();
       unTriage();
       unNotice();
+      unCalendar();
     };
   }, []);
 
@@ -137,15 +144,12 @@ export default function App() {
   return (
     <div className="fm-wash relative flex h-full bg-base">
       <NavRail
-        view="mail"
+        view={screen === "calendar" ? "calendar" : "mail"}
         onMail={() => {
           useMail.getState().closeThread();
           useUi.getState().setScreen("mail");
         }}
-        onCalendar={() => {
-          const s = useSettings.getState();
-          void s.save({ calendarOpen: !s.settings.calendarOpen });
-        }}
+        onCalendar={() => runCommandById("calendar.open")}
       />
       <div className="flex min-w-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-base px-3.5">
@@ -240,6 +244,7 @@ export default function App() {
       <main className="relative min-h-0 flex-1">
         {screen === "mail" && !openThreadId && <MailScreen />}
         {screen === "mail" && openThreadId && <ThreadView />}
+        {screen === "calendar" && <CalendarWeek />}
         {screen === "search" && <SearchScreen />}
         {screen === "settings" && <SettingsScreen />}
 

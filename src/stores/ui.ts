@@ -4,7 +4,10 @@ import { splitThreads, useMail, visibleThreads } from "./mail";
 import { useSettings } from "./settings";
 import type { MailAttachment, OutgoingMail, ThreadId, ZeroEvent } from "@/lib/types";
 
-export type Screen = "mail" | "settings" | "search";
+export type Screen = "mail" | "settings" | "search" | "calendar";
+
+/** Which region owns ambient keys like ←/→ (day navigation). */
+export type FocusRegion = "mail" | "calendar";
 
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward";
 
@@ -91,6 +94,7 @@ export type Picker =
 
 interface UiState {
   screen: Screen;
+  focusRegion: FocusRegion;
   paletteOpen: boolean;
   picker: Picker;
   compose: ComposeState | null;
@@ -106,6 +110,7 @@ interface UiState {
   askAiOpen: boolean;
 
   setScreen: (s: Screen) => void;
+  setFocusRegion: (r: FocusRegion) => void;
   openPalette: () => void;
   closePalette: () => void;
   openPicker: (p: Picker) => void;
@@ -128,6 +133,7 @@ let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
 export const useUi = create<UiState>((set, get) => ({
   screen: "mail",
+  focusRegion: "mail",
   paletteOpen: false,
   picker: "none",
   compose: null,
@@ -139,7 +145,14 @@ export const useUi = create<UiState>((set, get) => ({
   aiBarOpen: false,
   askAiOpen: false,
 
-  setScreen: (s) => set({ screen: s, paletteOpen: false, picker: "none" }),
+  setScreen: (s) =>
+    set({
+      screen: s,
+      paletteOpen: false,
+      picker: "none",
+      focusRegion: s === "calendar" ? "calendar" : "mail",
+    }),
+  setFocusRegion: (r) => set({ focusRegion: r }),
   openPalette: () => set({ paletteOpen: true }),
   closePalette: () => set({ paletteOpen: false }),
   openPicker: (p) => set({ picker: p }),

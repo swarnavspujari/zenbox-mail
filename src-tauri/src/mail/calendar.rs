@@ -37,16 +37,35 @@ pub async fn list_events(
         .take(MAX_CALENDARS)
         .collect();
 
+    // Resolve the token once, then hit every calendar concurrently — the
+    // serial loop was up to 10 sequential round trips per refresh.
+    let token = session.bearer(http).await?;
+    let handles: Vec<_> = calendars
+        .into_iter()
+        .map(|(cal_id, cal_name, color)| {
+            let url = format!(
+                "{BASE}/calendars/{}/events?timeMin={}&timeMax={}&singleEvents=true&orderBy=startTime&maxResults=100",
+                url::form_urlencoded::byte_serialize(cal_id.as_bytes()).collect::<String>(),
+                url::form_urlencoded::byte_serialize(time_min.as_bytes()).collect::<String>(),
+                url::form_urlencoded::byte_serialize(time_max.as_bytes()).collect::<String>(),
+            );
+            let http = http.clone();
+            let token = token.clone();
+            tokio::spawn(async move {
+                // one broken calendar shouldn't blank the whole panel
+                let resp = http.get(&url).bearer_auth(&token).send().await.ok()?;
+                if !resp.status().is_success() {
+                    return None;
+                }
+                let v: Value = resp.json().await.ok()?;
+                Some((cal_name, color, v))
+            })
+        })
+        .collect();
+
     let mut events: Vec<CalendarEvent> = vec![];
-    for (cal_id, cal_name, color) in calendars {
-        let url = format!(
-            "{BASE}/calendars/{}/events?timeMin={}&timeMax={}&singleEvents=true&orderBy=startTime&maxResults=100",
-            url::form_urlencoded::byte_serialize(cal_id.as_bytes()).collect::<String>(),
-            url::form_urlencoded::byte_serialize(time_min.as_bytes()).collect::<String>(),
-            url::form_urlencoded::byte_serialize(time_max.as_bytes()).collect::<String>(),
-        );
-        // one broken calendar shouldn't blank the whole panel
-        let Ok(v) = session.get_json(http, &url).await else { continue };
+    for handle in handles {
+        let Ok(Some((cal_name, color, v))) = handle.await else { continue };
         for item in v["items"].as_array().unwrap_or(&empty) {
             if item["status"].as_str() == Some("cancelled") {
                 continue;

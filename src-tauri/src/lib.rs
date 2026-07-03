@@ -270,15 +270,70 @@ async fn fetch_google_profile(http: &reqwest::Client, access_token: &str) -> Opt
     Some(ProfileInfo { name, picture })
 }
 
-/// Calendar events for the side panel. Demo accounts get fixture events so
-/// the panel is demoable with zero credentials.
+const DAY_MS: i64 = 24 * 3_600_000;
+
+/// Calendar events for the side panel / week view. Local-first: gmail
+/// accounts read the SQLite cache (refresh_calendar repopulates it in the
+/// background); demo accounts get fixture events so the panel is demoable
+/// with zero credentials.
 #[tauri::command]
-async fn list_events(
+fn list_events(
     state: State<'_, AppState>,
     start_ms: i64,
     end_ms: i64,
 ) -> Result<Vec<CalendarEvent>, String> {
-    if end_ms <= start_ms || end_ms - start_ms > 62 * 24 * 3_600_000 {
+    if end_ms <= start_ms || end_ms - start_ms > 62 * DAY_MS {
+        return Err("invalid time range".into());
+    }
+    let conn = state.db.lock().unwrap();
+    let active = store::active_account(&conn);
+    if active.provider != "gmail" {
+        return Ok(mail::mock::demo_events(start_ms, end_ms));
+    }
+    Ok(store::list_events(&conn, &active.email, start_ms, end_ms))
+}
+
+/// Fire-and-forget background refresh of one account's cached events for a
+/// window. On completion (or failure) emits `calendar:updated` with an
+/// optional error message so open panels repaint / surface guidance.
+fn spawn_calendar_refresh(app: AppHandle, email: String, start_ms: i64, end_ms: i64) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let result = {
+            let mut sessions = state.gmail.lock().await;
+            let Some(session) = sessions.get_mut(&email) else { return };
+            mail::calendar::list_events(&state.http, session, start_ms, end_ms).await
+        };
+        match result {
+            Ok(events) => {
+                {
+                    let conn = state.db.lock().unwrap();
+                    let _ = store::replace_events(&conn, &email, start_ms, end_ms, &events);
+                    let _ = store::set_json(
+                        &conn,
+                        &format!("cal_window:{email}"),
+                        &serde_json::json!({ "start": start_ms, "end": end_ms, "at": now_ms() }),
+                    );
+                }
+                let _ = app.emit("calendar:updated", Option::<String>::None);
+            }
+            Err(e) => {
+                let _ = app.emit("calendar:updated", Some(e));
+            }
+        }
+    });
+}
+
+/// Ask for fresh events around a range. Throttled: if the last fetch already
+/// covers the range and is under two minutes old, the cache stands.
+#[tauri::command]
+fn refresh_calendar(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<(), String> {
+    if end_ms <= start_ms || end_ms - start_ms > 62 * DAY_MS {
         return Err("invalid time range".into());
     }
     let active = {
@@ -286,13 +341,26 @@ async fn list_events(
         store::active_account(&conn)
     };
     if active.provider != "gmail" {
-        return Ok(mail::mock::demo_events(start_ms, end_ms));
+        return Ok(()); // demo events are synthesized on read
     }
-    let mut sessions = state.gmail.lock().await;
-    let session = sessions
-        .get_mut(&active.email)
-        .ok_or("account not connected")?;
-    mail::calendar::list_events(&state.http, session, start_ms, end_ms).await
+    // widen the fetch so day-by-day navigation stays inside one cached window
+    let fetch_start = start_ms - 3 * DAY_MS;
+    let fetch_end = end_ms.max(start_ms + 11 * DAY_MS);
+    {
+        let conn = state.db.lock().unwrap();
+        if let Some(w) =
+            store::get_json::<serde_json::Value>(&conn, &format!("cal_window:{}", active.email))
+        {
+            let covered = w["start"].as_i64().unwrap_or(i64::MAX) <= start_ms
+                && w["end"].as_i64().unwrap_or(0) >= end_ms;
+            let fresh = now_ms() - w["at"].as_i64().unwrap_or(0) < 120_000;
+            if covered && fresh {
+                return Ok(());
+            }
+        }
+    }
+    spawn_calendar_refresh(app, active.email, fetch_start, fetch_end);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1706,6 +1774,34 @@ pub fn run() {
                             }
                         }
                     }
+                    // Calendar cache refresh: 30s after boot, then every ~5 min
+                    // (rolling window of a week back and three ahead), so the
+                    // panel paints instantly from SQLite.
+                    if tick % 10 == 1 {
+                        let emails: Vec<String> = {
+                            let conn = state.db.lock().unwrap();
+                            store::get_accounts(&conn)
+                                .accounts
+                                .iter()
+                                .filter(|a| a.provider == "gmail")
+                                .map(|a| a.email.clone())
+                                .collect()
+                        };
+                        let day_start = chrono::Local::now()
+                            .date_naive()
+                            .and_hms_opt(0, 0, 0)
+                            .and_then(|t| t.and_local_timezone(chrono::Local).single())
+                            .map(|t| t.timestamp_millis())
+                            .unwrap_or_else(now_ms);
+                        for email in emails {
+                            spawn_calendar_refresh(
+                                handle.clone(),
+                                email,
+                                day_start - 7 * DAY_MS,
+                                day_start + 21 * DAY_MS,
+                            );
+                        }
+                    }
                     if changed {
                         let _ = handle.emit("mail:updated", ());
                         notify_new_mail(&handle, notify_watermark);
@@ -1752,6 +1848,7 @@ pub fn run() {
             get_profile,
             set_profile_photo,
             list_events,
+            refresh_calendar,
             get_settings,
             save_settings,
             get_knowledge_base,

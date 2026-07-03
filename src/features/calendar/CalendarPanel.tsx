@@ -1,17 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { backend } from "@/lib/ipc";
+import { DAY_MS, startOfToday, useCalendar } from "@/stores/calendar";
+import { useUi } from "@/stores/ui";
 import type { CalendarEvent } from "@/lib/types";
 
-const DAY_MS = 24 * 3600_000;
 const FIRST_HOUR = 7;
 const LAST_HOUR = 20;
 const PX_PER_HOUR = 52;
-
-function startOfDay(offset: number): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime() + offset * DAY_MS;
-}
 
 function hourLabel(h: number): string {
   if (h === 12) return "12 pm";
@@ -53,32 +47,22 @@ function EventBlock({ e, dayStart }: { e: CalendarEvent; dayStart: number }) {
   );
 }
 
-/** Right-hand day calendar, Superhuman-style: toggleable, read-only, fed by
- *  Google Calendar (or fixture events in demo mode). */
+/** Right-hand day calendar, Superhuman-style: toggleable, read-only, painted
+ *  instantly from the shared day-keyed cache; a background refresh keeps it
+ *  fresh. ←/→ move days while the panel has focus. */
 export function CalendarPanel() {
-  const [dayOffset, setDayOffset] = useState(0);
-  const [events, setEvents] = useState<CalendarEvent[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const dayOffset = useCalendar((s) => s.dayOffset);
+  const events = useCalendar((s) => s.eventsByDay);
+  const loadedDays = useCalendar((s) => s.loadedDays);
+  const error = useCalendar((s) => s.error);
+  const focused = useUi((s) => s.focusRegion === "calendar");
   const [nowTick, setNowTick] = useState(Date.now());
-  const dayStart = useMemo(() => startOfDay(dayOffset), [dayOffset]);
+  const dayStart = useMemo(() => startOfToday() + dayOffset * DAY_MS, [dayOffset]);
 
   useEffect(() => {
-    let stale = false;
-    setError(null);
-    backend
-      .listEvents(dayStart, dayStart + DAY_MS)
-      .then((ev) => {
-        if (!stale) setEvents(ev);
-      })
-      .catch((e) => {
-        if (!stale) {
-          setEvents([]);
-          setError(String(e));
-        }
-      });
-    return () => {
-      stale = true;
-    };
+    const cal = useCalendar.getState();
+    void cal.loadRange(dayStart, 1);
+    cal.requestRefresh();
   }, [dayStart]);
 
   useEffect(() => {
@@ -86,8 +70,10 @@ export function CalendarPanel() {
     return () => clearInterval(t);
   }, []);
 
-  const timed = (events ?? []).filter((e) => !e.allDay);
-  const allDay = (events ?? []).filter((e) => e.allDay);
+  const dayEvents = events[dayStart];
+  const loading = !loadedDays[dayStart];
+  const timed = (dayEvents ?? []).filter((e) => !e.allDay);
+  const allDay = (dayEvents ?? []).filter((e) => e.allDay);
   const isToday = dayOffset === 0;
   const nowTop =
     isToday && nowTick > dayStart + FIRST_HOUR * 3600_000 && nowTick < dayStart + LAST_HOUR * 3600_000
@@ -101,30 +87,41 @@ export function CalendarPanel() {
   });
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col border-l border-line bg-surface">
+    <aside
+      onMouseDown={() => useUi.getState().setFocusRegion("calendar")}
+      className={`flex w-72 shrink-0 flex-col border-l bg-surface ${
+        focused ? "border-accent/40" : "border-line"
+      }`}
+    >
       <div className="flex items-center gap-2 px-4 py-3">
         <span className="flex-1 text-[14px] font-semibold text-ink">
           {title}
           {!isToday && (
             <button
               className="ml-2 rounded px-1.5 text-[11px] text-accent-strong hover:bg-hover"
-              onClick={() => setDayOffset(0)}
+              onClick={() => useCalendar.getState().goToday()}
             >
               today
             </button>
           )}
         </span>
+        {focused && (
+          <span className="text-[10.5px] text-ink-3">
+            <span className="kbd">←</span>
+            <span className="kbd">→</span>
+          </span>
+        )}
         <button
           className="rounded-md border border-line px-2 py-0.5 text-ink-3 hover:bg-hover hover:text-ink"
-          onClick={() => setDayOffset((d) => d - 1)}
-          title="Previous day"
+          onClick={() => useCalendar.getState().shiftDay(-1)}
+          title="Previous day (←)"
         >
           ‹
         </button>
         <button
           className="rounded-md border border-line px-2 py-0.5 text-ink-3 hover:bg-hover hover:text-ink"
-          onClick={() => setDayOffset((d) => d + 1)}
-          title="Next day"
+          onClick={() => useCalendar.getState().shiftDay(1)}
+          title="Next day (→)"
         >
           ›
         </button>
@@ -151,6 +148,11 @@ export function CalendarPanel() {
           <div className="px-4 py-6 text-[12px] leading-relaxed text-ink-3">
             {error}
           </div>
+        ) : loading ? (
+          <div className="flex items-center justify-center gap-2 pt-12 text-[12px] text-ink-3">
+            <span className="zb-spin inline-block h-3 w-3 rounded-full border-2 border-line-strong border-t-accent" />
+            Loading calendar…
+          </div>
         ) : (
           <div className="relative mx-3 my-2" style={{ height: (LAST_HOUR - FIRST_HOUR) * PX_PER_HOUR }}>
             {Array.from({ length: LAST_HOUR - FIRST_HOUR }, (_, i) => (
@@ -168,7 +170,7 @@ export function CalendarPanel() {
               {timed.map((e) => (
                 <EventBlock key={e.id} e={e} dayStart={dayStart} />
               ))}
-              {events !== null && timed.length === 0 && (
+              {timed.length === 0 && (
                 <div className="pt-10 text-center text-[12px] text-ink-3">
                   Nothing scheduled.
                 </div>

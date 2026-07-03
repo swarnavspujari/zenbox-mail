@@ -108,6 +108,7 @@ export class MockBackend implements Backend {
   private accountOf: Map<string, string>;
   private state: PersistedState;
   private listeners = new Set<() => void>();
+  private calendarListeners = new Set<(error: string | null) => void>();
   private cancelFlags = new Map<number, boolean>();
   private aiSeq = 1;
 
@@ -660,9 +661,18 @@ export class MockBackend implements Backend {
     return BUNDLED_CELEBRATIONS;
   }
 
+  async refreshCalendar() {
+    // demo events are synthesized on read — announce "fresh" immediately
+    for (const cb of this.calendarListeners) cb(null);
+  }
+
   onMailUpdated(cb: () => void): () => void {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
+  }
+  onCalendarUpdated(cb: (error: string | null) => void): () => void {
+    this.calendarListeners.add(cb);
+    return () => this.calendarListeners.delete(cb);
   }
   // Demo fixtures carry real HTML + no remote images, so these never fire.
   onThreadImages(): () => void {
