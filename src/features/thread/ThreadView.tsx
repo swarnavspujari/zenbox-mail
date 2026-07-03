@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { backend, isTauri } from "@/lib/ipc";
 import { useMail } from "@/stores/mail";
+import { useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { Avatar } from "@/components/Avatar";
+import { ContactPanel } from "@/components/ContactPanel";
+import { Label } from "@/components/Label";
 import type { Attachment, Message } from "@/lib/types";
 
 function fmtSize(bytes: number): string {
@@ -55,28 +58,43 @@ const QUOTE_MARKERS = ["gmail_quote", "<blockquote"];
 /**
  * Sanitized HTML body in a script-less sandboxed iframe. Height tracks the
  * content; links open in the system browser; quoted trails collapse behind
- * the same ••• toggle as plain text.
+ * the same ••• toggle as plain text. The iframe can't inherit CSS variables
+ * through srcDoc, so the current theme's tokens are read at build time and
+ * inlined — no more hardcoded white island in the dark shell.
  */
-function HtmlBody({ html, showQuote }: { html: string; showQuote: boolean }) {
+function HtmlBody({
+  html,
+  showQuote,
+  theme,
+}: {
+  html: string;
+  showQuote: boolean;
+  theme: "dark" | "light";
+}) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(80);
 
   const srcDoc = useMemo(() => {
+    const css = getComputedStyle(document.documentElement);
+    const v = (name: string, fallback: string) =>
+      css.getPropertyValue(name).trim() || fallback;
     const quoteCss = showQuote
       ? ""
       : ".gmail_quote{display:none!important} body>blockquote:last-of-type, div>blockquote:last-child{display:none!important}";
     return `<!doctype html><html><head><meta charset="utf-8"><style>
+      :root{color-scheme:${theme}}
       html,body{margin:0;padding:0}
-      body{background:#ffffff;color:#1d222b;font:13.5px/1.55 "Segoe UI",system-ui,sans-serif;
+      body{background:${v("--bg-raised", "#ffffff")};color:${v("--text-primary", "#1d222b")};
+           font:13.5px/1.55 "Segoe UI",system-ui,sans-serif;
            padding:16px 18px;word-break:break-word;overflow-x:hidden}
       img{max-width:100%;height:auto}
       table{max-width:100%}
-      a{color:#3b52c4}
-      blockquote{margin:8px 0 8px 4px;padding-left:12px;border-left:2px solid #d5d9e2;color:#5b6272}
+      a{color:${v("--accent-strong", "#3b52c4")}}
+      blockquote{margin:8px 0 8px 4px;padding-left:12px;border-left:2px solid ${v("--border-strong", "#d5d9e2")};color:${v("--text-secondary", "#5b6272")}}
       pre{white-space:pre-wrap}
       ${quoteCss}
     </style></head><body>${html}</body></html>`;
-  }, [html, showQuote]);
+  }, [html, showQuote, theme]);
 
   useEffect(() => {
     const iframe = ref.current;
@@ -119,7 +137,7 @@ function HtmlBody({ html, showQuote }: { html: string; showQuote: boolean }) {
       sandbox="allow-same-origin"
       srcDoc={srcDoc}
       title="message"
-      className="w-full rounded-b-lg border-0 bg-white"
+      className="w-full rounded-b-[10px] border-0 bg-raised"
       style={{ height }}
     />
   );
@@ -172,10 +190,14 @@ function AttachmentChip({ a }: { a: Attachment }) {
 function MessageCard({
   m,
   expanded,
+  last,
+  theme,
   onToggle,
 }: {
   m: Message;
   expanded: boolean;
+  last: boolean;
+  theme: "dark" | "light";
   onToggle: () => void;
 }) {
   const [showQuote, setShowQuote] = useState(false);
@@ -191,7 +213,7 @@ function MessageCard({
     return (
       <button
         onClick={onToggle}
-        className="flex w-full items-center gap-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-left hover:bg-hover"
+        className="flex w-full items-center gap-3 rounded-[10px] border border-line bg-surface px-4 py-2.5 text-left hover:bg-hover"
       >
         <Avatar name={m.fromName} email={m.from} size={26} />
         <span className="w-40 shrink-0 truncate text-[13px] font-medium text-ink-2">
@@ -206,15 +228,19 @@ function MessageCard({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-line bg-surface">
+    <div
+      className={`overflow-hidden rounded-[10px] border bg-raised ${
+        last ? "border-line-strong" : "border-line"
+      }`}
+    >
       <button
         onClick={onToggle}
-        className="flex w-full items-center gap-3 border-b border-line px-4 py-2.5 text-left"
+        className="flex w-full items-center gap-3 px-[18px] py-3 text-left"
       >
-        <Avatar name={m.fromName} email={m.from} size={32} />
+        <Avatar name={m.fromName} email={m.from} size={34} />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className="font-medium text-ink">{m.fromName}</span>
+            <span className="font-semibold text-ink">{m.fromName}</span>
             <span className="truncate text-[12px] text-ink-3">{m.from}</span>
           </div>
           <div className="truncate text-[12px] text-ink-3">
@@ -226,27 +252,23 @@ function MessageCard({
       </button>
 
       {html ? (
-        <HtmlBody html={html} showQuote={showQuote} />
+        <HtmlBody html={html} showQuote={showQuote} theme={theme} />
       ) : isEmpty ? (
-        <div className="flex items-center gap-2 px-4 py-3 text-[13px] italic text-ink-3">
+        <div className="flex items-center gap-2 px-[18px] py-3 text-[13px] italic text-ink-3">
           <span className="zb-spin inline-block h-3 w-3 rounded-full border-2 border-line-strong border-t-accent" />
           Loading message…
         </div>
       ) : (
-        <div className="selectable whitespace-pre-wrap px-4 py-3 leading-relaxed text-ink">
+        <div className="selectable whitespace-pre-wrap px-[18px] pb-4 pt-1 text-[14px] leading-[1.65] text-ink">
           {showQuote && quoted ? `${main}\n${quoted}` : main}
         </div>
       )}
 
       {hasQuoteToggle && (
-        <div className={html ? "bg-white px-4 pb-3" : "px-4 pb-2"}>
+        <div className="px-[18px] pb-3">
           <button
             onClick={() => setShowQuote((s) => !s)}
-            className={`rounded-full border px-2 leading-4 ${
-              html
-                ? "border-neutral-300 text-neutral-500 hover:bg-neutral-100"
-                : "border-line-strong text-ink-3 hover:bg-hover"
-            }`}
+            className="rounded-full border border-line-strong px-2 leading-4 text-ink-3 hover:bg-hover"
             title={showQuote ? "Hide quoted text" : "Show quoted text"}
           >
             •••
@@ -255,7 +277,7 @@ function MessageCard({
       )}
 
       {m.attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2 border-t border-line px-4 py-3">
+        <div className="flex flex-wrap gap-2 border-t border-line px-[18px] py-3">
           {m.attachments.map((a) => (
             <AttachmentChip key={a.id} a={a} />
           ))}
@@ -271,10 +293,13 @@ function InstantReplies() {
 
   if (suggestions.length === 0) return null;
   return (
-    <div className="border-t border-line bg-surface px-6 py-3">
-      <div className="mb-2 text-[11px] uppercase tracking-wide text-ink-3">
-        Instant replies — <span className="kbd">Tab</span> to preview,{" "}
-        <span className="kbd">R</span> to use
+    <div className="border-t border-line bg-surface px-7 py-3">
+      <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.06em] text-ink-3">
+        <span aria-hidden className="text-accent-strong">
+          ✦
+        </span>
+        Instant replies — <span className="kbd">Tab</span> preview ·{" "}
+        <span className="kbd">R</span> use
       </div>
       <div className="flex gap-2">
         {suggestions.map((s, i) => (
@@ -283,7 +308,7 @@ function InstantReplies() {
             onClick={() => {
               useUi.setState({ suggestionIndex: i });
             }}
-            className={`max-w-[32%] truncate rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
+            className={`max-w-[32%] truncate rounded-full border px-3.5 py-1.5 text-[12.5px] transition-colors ${
               idx === i
                 ? "border-accent bg-accent-dim text-ink"
                 : "border-line-strong bg-raised text-ink-2 hover:bg-hover"
@@ -294,7 +319,7 @@ function InstantReplies() {
         ))}
       </div>
       {idx !== null && (
-        <div className="zb-fade-in mt-2 whitespace-pre-wrap rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-ink">
+        <div className="zb-fade-in mt-2 whitespace-pre-wrap rounded-md border border-line bg-raised px-3 py-2 text-[13px] leading-relaxed text-ink">
           {suggestions[idx]}
         </div>
       )}
@@ -305,6 +330,8 @@ function InstantReplies() {
 export function ThreadView() {
   const messages = useMail((s) => s.openMessages);
   const threadId = useMail((s) => s.openThreadId);
+  const theme = useSettings((s) => s.settings.theme);
+  const myEmail = useSettings((s) => s.accounts.active);
   // Superhuman-style: older messages collapse; the last (and any unread)
   // stay open. User toggles override until the thread changes.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
@@ -336,48 +363,84 @@ export function ThreadView() {
     };
   }, [threadId]);
 
-  if (messages.length === 0) return null;
+  const thread = useMail((s) =>
+    [...s.inbox, ...s.done, ...s.reminders, ...s.starred, ...s.trash].find(
+      (t) => t.id === threadId
+    )
+  );
+
+  if (messages.length === 0 || !threadId) return null;
   const subject = messages[0].subject;
   const isExpanded = (m: Message, i: number) =>
     overrides[m.id] ?? (i === messages.length - 1 || m.unread);
+  // The person you're talking to: latest sender that isn't you.
+  const me = (myEmail ?? "").toLowerCase();
+  const contact =
+    [...messages].reverse().find((m) => m.from.toLowerCase() !== me) ??
+    messages[0];
+  const userLabels = (thread?.labels ?? []).filter((l) => !/^[A-Z_]+$/.test(l));
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-line bg-surface px-6 py-3">
-        <button
-          className="rounded px-1.5 py-0.5 text-ink-3 hover:bg-hover"
-          onClick={() => useMail.getState().closeThread()}
-          title="Back (Esc)"
+    <div className="flex h-full min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex shrink-0 items-center gap-3 px-7 py-2.5">
+          <button
+            className="rounded px-1.5 py-0.5 text-ink-3 hover:bg-hover"
+            onClick={() => useMail.getState().closeThread()}
+            title="Back (Esc)"
+          >
+            ←
+          </button>
+          <div className="flex-1" />
+          <span className="text-[11px] text-ink-3">
+            <span className="kbd">E</span> done · <span className="kbd">R</span>{" "}
+            reply · <span className="kbd">H</span> snooze
+          </span>
+        </div>
+        <div
+          data-thread-scroll
+          className="min-h-0 flex-1 overflow-y-auto"
         >
-          ←
-        </button>
-        <h1 className="truncate text-[15px] font-semibold text-ink">{subject}</h1>
-        <span className="shrink-0 rounded-full bg-raised px-2 text-[11px] leading-[18px] text-ink-3">
-          {messages.length}
-        </span>
-        <div className="flex-1" />
-        <span className="text-[11px] text-ink-3">
-          <span className="kbd">E</span> done · <span className="kbd">R</span>{" "}
-          reply · <span className="kbd">H</span> snooze
-        </span>
+          <div className="mx-auto w-full max-w-[760px] px-7 pb-5">
+            <div className="pb-4 pt-1">
+              {userLabels.length > 0 && (
+                <div className="mb-2 flex items-center gap-2">
+                  {userLabels.map((l) => (
+                    <Label key={l}>{l}</Label>
+                  ))}
+                </div>
+              )}
+              <h1 className="text-[22px] font-semibold leading-snug tracking-tight text-ink">
+                {subject}
+              </h1>
+              <div className="mt-1 text-[12px] text-ink-3">
+                {messages.length} message{messages.length > 1 ? "s" : ""}
+              </div>
+            </div>
+            <div className="space-y-2">
+              {messages.map((m, i) => (
+                <MessageCard
+                  key={m.id}
+                  m={m}
+                  expanded={isExpanded(m, i)}
+                  last={i === messages.length - 1}
+                  theme={theme}
+                  onToggle={() =>
+                    setOverrides((o) => ({ ...o, [m.id]: !isExpanded(m, i) }))
+                  }
+                />
+              ))}
+            </div>
+            <div ref={endRef} />
+          </div>
+        </div>
+        <InstantReplies />
       </div>
-      <div
-        data-thread-scroll
-        className="min-h-0 flex-1 space-y-2 overflow-y-auto px-6 py-4"
-      >
-        {messages.map((m, i) => (
-          <MessageCard
-            key={m.id}
-            m={m}
-            expanded={isExpanded(m, i)}
-            onToggle={() =>
-              setOverrides((o) => ({ ...o, [m.id]: !isExpanded(m, i) }))
-            }
-          />
-        ))}
-        <div ref={endRef} />
-      </div>
-      <InstantReplies />
+      <ContactPanel
+        name={contact.fromName}
+        email={contact.from}
+        currentThreadId={threadId}
+      />
     </div>
   );
 }

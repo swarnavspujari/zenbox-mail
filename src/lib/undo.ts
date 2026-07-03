@@ -15,6 +15,11 @@ export function pushUndo(entry: UndoEntry) {
   if (stack.length > 30) stack.shift();
 }
 
+/** True when Z has something live to undo (drives the toast's Undo button). */
+export function hasUndo(): boolean {
+  return stack.some((e) => !e.expiresAt || Date.now() <= e.expiresAt);
+}
+
 /** Runs the most recent live entry. Returns false when there's nothing left. */
 export async function popUndo(): Promise<boolean> {
   while (stack.length > 0) {

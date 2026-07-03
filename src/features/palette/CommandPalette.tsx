@@ -72,17 +72,22 @@ export function CommandPalette() {
       className="zb-fade-in absolute inset-0 z-40 flex items-start justify-center bg-black/50 pt-[12vh]"
       onClick={() => useUi.getState().closePalette()}
     >
+      {/* Fission Command is dark on any theme — --palette-* tokens don't
+          flip with the light theme (design system rule). */}
       <div
-        className="zb-pop-in w-[640px] max-w-[92vw] overflow-hidden rounded-xl border border-line-strong bg-overlay shadow-2xl"
+        className="zb-pop-in w-[640px] max-w-[92vw] overflow-hidden rounded-xl border border-[var(--palette-line)] bg-[var(--palette-bg)] shadow-2xl [color-scheme:dark]"
         onClick={(e) => e.stopPropagation()}
       >
+        <div className="flex items-center gap-2.5 px-4 pb-2 pt-3.5 text-[13px] text-[var(--palette-text-faint)]">
+          <span aria-hidden>⬡</span> Fission Command
+        </div>
         <input
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder="Type a command…"
-          className="w-full border-b border-line bg-transparent px-4 py-3.5 text-[14px] text-ink outline-none placeholder:text-ink-3"
+          className="w-full border-b border-t border-[var(--palette-line)] bg-transparent px-4 py-3 text-[15px] text-[var(--palette-text)] outline-none placeholder:text-[var(--palette-text-faint)]"
         />
         <div className="max-h-[52vh] overflow-y-auto py-1">
           {items.map((c, i) => {
@@ -91,7 +96,7 @@ export function CommandPalette() {
             return (
               <div key={c.id}>
                 {header && (
-                  <div className="px-4 pb-1 pt-2.5 text-[10.5px] font-medium uppercase tracking-wider text-ink-3">
+                  <div className="px-4 pb-1 pt-2.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-[var(--palette-text-faint)]">
                     {header}
                   </div>
                 )}
@@ -99,19 +104,23 @@ export function CommandPalette() {
                   onClick={() => runItem(c)}
                   onMouseEnter={() => setIndex(i)}
                   className={`flex w-full items-center px-4 py-2 text-left text-[13.5px] ${
-                    i === index ? "bg-selected text-ink" : "text-ink-2"
+                    i === index
+                      ? "bg-[var(--palette-hover)] text-[var(--palette-text)]"
+                      : "text-[var(--palette-text-dim)]"
                   }`}
                 >
                   <span className="flex-1">{c.title}</span>
                   {shortcuts[c.id] && (
-                    <span className="kbd">{formatKeyExpr(shortcuts[c.id])}</span>
+                    <span className="rounded px-1.5 text-[11px] leading-4 text-[var(--palette-text-dim)] [background:rgba(255,255,255,0.08)]">
+                      {formatKeyExpr(shortcuts[c.id])}
+                    </span>
                   )}
                 </button>
               </div>
             );
           })}
           {items.length === 0 && (
-            <div className="px-4 py-6 text-center text-[13px] text-ink-3">
+            <div className="px-4 py-6 text-center text-[13px] text-[var(--palette-text-faint)]">
               No matching commands
             </div>
           )}

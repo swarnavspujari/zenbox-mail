@@ -344,7 +344,7 @@ export function Compose() {
         {compose.signature &&
           (/<\w+[^>]*>/.test(compose.signature) ? (
             <div
-              className="selectable max-h-36 overflow-y-auto rounded-b-none border-t border-line bg-white px-4 py-2 text-[12.5px] leading-relaxed text-neutral-800"
+              className="selectable max-h-36 overflow-y-auto rounded-b-none border-t border-line bg-raised px-4 py-2 text-[12.5px] leading-relaxed text-ink"
               title="Signature — set per account in Settings → Account"
               // user-authored, sanitized again at render as defense in depth
               dangerouslySetInnerHTML={{ __html: sanitizeUserHtml(compose.signature) }}

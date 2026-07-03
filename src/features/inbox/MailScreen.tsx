@@ -5,7 +5,18 @@ import { splitThreads, useMail } from "@/stores/mail";
 import { useSettings } from "@/stores/settings";
 import { CalendarPanel } from "@/features/calendar/CalendarPanel";
 import { FolderSidebar } from "@/components/FolderSidebar";
+import { IconButton } from "@/components/Button";
+import { Label } from "@/components/Label";
 import type { Thread } from "@/lib/types";
+
+// Sender status dots — unread markers cycle so threads are tellable apart
+// at a glance (design system "sender dots").
+const DOTS = ["--dot-blue", "--dot-pink", "--dot-amber", "--dot-violet"];
+function dotOf(key: string): string {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+  return `var(${DOTS[((h % 4) + 4) % 4]})`;
+}
 
 function timeLabel(ms: number): string {
   const d = new Date(ms);
@@ -70,7 +81,7 @@ function SplitTabs() {
   );
 
   return (
-    <div className="flex items-center gap-1 border-b border-line bg-base px-3">
+    <div className="flex h-[52px] shrink-0 items-center gap-5 px-6">
       {shown.map((sp) => {
         const count = splitThreads(inbox, sp.id).length;
         const active = sp.id === activeSplitId;
@@ -78,19 +89,15 @@ function SplitTabs() {
           <button
             key={sp.id}
             onClick={() => useMail.getState().setActiveSplit(sp.id)}
-            className={`relative -mb-px flex items-center gap-2 border-b-2 px-3 py-2.5 text-[13px] transition-colors ${
-              active
-                ? "border-accent font-medium text-ink"
-                : "border-transparent text-ink-3 hover:text-ink-2"
+            className={`flex items-center gap-2 py-1 text-[17px] tracking-tight transition-colors ${
+              active ? "font-semibold text-ink" : "text-ink-3 hover:text-ink-2"
             }`}
           >
             {sp.name}
             {/* total conversations, not unread — a split reads like a to-do list */}
             <span
-              className={`rounded-full border px-1.5 text-[10.5px] leading-[17px] ${
-                active
-                  ? "border-accent/40 bg-accent-dim text-accent-strong"
-                  : "border-line bg-raised text-ink-3"
+              className={`text-[12.5px] font-medium ${
+                active ? "text-accent-strong" : "text-ink-3"
               }`}
             >
               {count}
@@ -99,12 +106,10 @@ function SplitTabs() {
         );
       })}
       <div className="flex-1" />
-      <span className="pr-2 text-[11px] text-ink-3">
+      <span className="whitespace-nowrap text-[11px] text-ink-3">
         <span className="kbd">Tab</span> to switch
       </span>
-      <div className="pb-1.5 pt-1">
-        <CalendarToggle />
-      </div>
+      <CalendarToggle />
     </div>
   );
 }
@@ -121,10 +126,13 @@ function Row({
   checked: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [hovered, setHovered] = useState(false);
 
   useEffect(() => {
     if (selected) ref.current?.scrollIntoView({ block: "nearest" });
   }, [selected]);
+
+  const userLabels = t.labels.filter((l) => !/^[A-Z_]+$/.test(l));
 
   return (
     <div
@@ -137,25 +145,28 @@ function Row({
         useMail.getState().select(index);
         void useMail.getState().openThread(t.id);
       }}
-      className={`flex cursor-pointer items-center gap-3 border-b border-line px-4 py-[10px] ${
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className={`flex cursor-pointer items-center gap-3 px-6 py-[11px] text-[14px] ${
         selected ? "bg-selected" : checked ? "bg-accent-dim" : "hover:bg-hover"
       }`}
     >
       {checked ? (
-        <div className="flex h-1.5 w-1.5 shrink-0 items-center justify-center text-[11px] leading-none text-accent-strong">
+        <div className="flex w-[7px] shrink-0 items-center justify-center text-[11px] leading-none text-accent-strong">
           ✓
         </div>
       ) : (
         <div
-          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-            t.unread ? "bg-accent-strong" : "bg-transparent"
-          }`}
+          className="h-[7px] w-[7px] shrink-0 rounded-full"
+          style={{
+            background: t.unread ? dotOf(t.participants[0] ?? t.id) : "transparent",
+          }}
         />
       )}
       <div className="w-44 shrink-0 truncate">
         <span
           className={
-            t.unread ? "font-semibold text-ink" : selected ? "text-ink-2" : "text-ink-3"
+            t.unread ? "font-semibold text-ink" : selected ? "text-ink-2" : "text-ink-2"
           }
         >
           {t.participants
@@ -167,26 +178,59 @@ function Row({
           <span className="ml-1.5 text-[11px] text-ink-3">{t.messageCount}</span>
         )}
       </div>
-      <div className="min-w-0 flex-1 truncate">
-        <span className={t.unread ? "font-semibold text-ink" : "text-ink-2"}>
+      <div className="flex min-w-0 flex-1 items-center gap-2 truncate">
+        {userLabels.map((l) => (
+          <Label key={l}>{l}</Label>
+        ))}
+        <span
+          className={`shrink-0 ${t.unread ? "font-semibold text-ink" : "text-ink-2"}`}
+        >
           {t.subject}
         </span>
-        <span className="ml-2 text-[12px] text-ink-3">{t.snippet}</span>
+        <span className="truncate text-[12.5px] text-ink-3">{t.snippet}</span>
       </div>
-      {t.snoozedUntil !== null && (
-        <span className="shrink-0 rounded bg-accent-dim px-1.5 text-[11px] leading-[18px] text-accent-strong">
-          {new Date(t.snoozedUntil).toLocaleString(undefined, {
-            month: "short",
-            day: "numeric",
-            hour: "numeric",
-            minute: "2-digit",
-          })}
-        </span>
+      {hovered ? (
+        <div
+          className="flex shrink-0 gap-0.5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <IconButton
+            label="Mark Done (E)"
+            onClick={() => {
+              useMail.getState().select(index);
+              runCommandById("thread.done");
+            }}
+          >
+            ✓
+          </IconButton>
+          <IconButton
+            label="Remind me (H)"
+            onClick={() => {
+              useMail.getState().select(index);
+              runCommandById("thread.snooze");
+            }}
+          >
+            🕑
+          </IconButton>
+        </div>
+      ) : (
+        <>
+          {t.snoozedUntil !== null && (
+            <span className="shrink-0 rounded-full bg-accent-dim px-2 text-[11px] leading-[18px] text-accent-strong">
+              {new Date(t.snoozedUntil).toLocaleString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </span>
+          )}
+          {t.starred && <span className="shrink-0 text-[12px] text-gold">★</span>}
+          <span className="w-14 shrink-0 text-right text-[12px] text-ink-3">
+            {timeLabel(t.lastDate)}
+          </span>
+        </>
       )}
-      {t.starred && <span className="shrink-0 text-[12px] text-warn">★</span>}
-      <span className="w-14 shrink-0 text-right text-[11.5px] text-ink-3">
-        {timeLabel(t.lastDate)}
-      </span>
     </div>
   );
 }

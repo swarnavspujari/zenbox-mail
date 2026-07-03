@@ -67,7 +67,7 @@ export function SignatureEditor({
         onInput={emit}
         onBlur={emit}
         data-placeholder="Signature — paste your Gmail signature here (formatting and images survive)"
-        className="selectable min-h-16 w-full rounded-md border border-line-strong bg-white px-3 py-2 text-[13px] leading-relaxed text-neutral-800 outline-none focus:border-accent [&:empty]:before:text-neutral-400 [&:empty]:before:content-[attr(data-placeholder)]"
+        className="selectable min-h-16 w-full rounded-md border border-line-strong bg-raised px-3 py-2 text-[13px] leading-relaxed text-ink outline-none focus:border-accent [&:empty]:before:text-ink-3 [&:empty]:before:content-[attr(data-placeholder)]"
       />
       <div className="mt-1.5 flex items-center gap-2">
         <button

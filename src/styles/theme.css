@@ -1,73 +1,151 @@
 @import "tailwindcss";
 
 /*
-  Fission dark theme tokens.
+  Fission Mail Design System tokens (design-system/tokens/*.css, ported).
 
-  Principle 1 — darken distant surfaces: base (furthest) is darkest; each
-  nearer layer (surface -> raised -> overlay) is lighter, as if lit from above.
-  Principle 4 — no pure black/white anywhere; body text is ~90% opacity to
-  prevent halation on OLED.
-  Principle 5 — accents are deepened: lower lightness, higher saturation than
-  their light-theme equivalents so they don't overpower text.
+  Dark is a midnight-navy ramp lit from above; light is a warm off-white.
+  The five dark-theme principles the system encodes:
+  1 — darken distant surfaces: base (furthest) is darkest; each nearer layer
+      (surface -> raised -> overlay) is lighter, as if lit from above.
+  2 — perceptual contrast is re-tuned per theme, not reused.
+  3 — no big bright blocks: accents are thin bars, pills, and dim washes.
+  4 — no pure black/white; body text rides at ~92% to prevent halation.
+  5 — accents deepen (lower lightness, higher saturation) vs. light theme.
+  Palette anchors (dark): #000814 #001d3d #003566 #ffc300 #ffd60a
 */
 :root {
-  /* Surfaces, furthest to nearest — deep blue-black per the design spec */
-  --bg-base: #0b0c12;
-  --bg-surface: #10121a;
-  --bg-raised: #181b26;
-  --bg-overlay: #1f2331;
-  --bg-hover: #171a26;
-  --bg-selected: #232848;
+  /* Surfaces — furthest → nearest. Midnight navy. */
+  --bg-base: #000814;
+  --bg-surface: #001229;
+  --bg-raised: #001d3d;
+  --bg-overlay: #002a52;
+  --bg-hover: #04182f;
+  --bg-selected: #0e3459;
 
-  /* Text — never #fff; primary rides at ~90% */
-  --text-primary: rgba(233, 236, 245, 0.92);
-  --text-secondary: rgba(196, 202, 218, 0.72);
-  --text-muted: rgba(163, 171, 192, 0.5);
+  /* Text — never #fff; primary rides at ~92% to avoid halation on navy. */
+  --text-primary: rgba(233, 238, 248, 0.92);
+  --text-secondary: rgba(191, 202, 222, 0.72);
+  --text-muted: rgba(150, 166, 194, 0.52);
 
-  /* Violet accent family (design spec, palette 04) */
+  /* Interactive primary — electric violet (the brand). */
   --accent: #7c7ff2;
   --accent-strong: #989bfa;
-  --accent-dim: rgba(124, 127, 242, 0.16);
-  --on-accent: #0b0c12;
-  --success: #46d19a;
-  --warning: #e6b84c;
-  --danger: #e5645f;
+  --accent-dim: rgba(124, 127, 242, 0.18);
+  --on-accent: #000814;
 
-  --border: rgba(255, 255, 255, 0.06);
-  --border-strong: rgba(255, 255, 255, 0.13);
+  /* Highlight accent — warm gold. Stars, unread emphasis; never buttons. */
+  --accent-2: #ffc300;
+  --accent-2-strong: #ffd60a;
+  --accent-2-dim: rgba(255, 198, 10, 0.16);
+  --on-accent-2: #000814;
+
+  /* Semantic status — warning maps to the palette gold. */
+  --success: #46d19a;
+  --warning: #ffc300;
+  --danger: #f0655f;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
 
   --focus-ring: 0 0 0 2px rgba(152, 155, 250, 0.7);
+
+  /* Auto-label / tag palette — dim fill + legible same-hue text. */
+  --tag-violet-bg: rgba(124, 127, 242, 0.22);
+  --tag-violet-fg: #bcbeff;
+  --tag-amber-bg: rgba(255, 198, 10, 0.2);
+  --tag-amber-fg: #ffd851;
+  --tag-green-bg: rgba(70, 209, 154, 0.18);
+  --tag-green-fg: #6fe0b6;
+  --tag-blue-bg: rgba(90, 176, 255, 0.2);
+  --tag-blue-fg: #92c6ff;
+  --tag-pink-bg: rgba(232, 121, 190, 0.2);
+  --tag-pink-fg: #f0a4d5;
+  --tag-gray-bg: rgba(160, 176, 205, 0.16);
+  --tag-gray-fg: #b6c2d6;
+
+  /* Sender status dots — unread markers cycle through these. */
+  --dot-blue: #5fb0ff;
+  --dot-pink: #e879be;
+  --dot-amber: #ffd60a;
+  --dot-violet: #989bfa;
+
+  /* Signature wash: a gold whisper at the bottom fading up through violet. */
+  --wash-bottom: linear-gradient(
+    to top,
+    rgba(255, 198, 10, 0.05),
+    rgba(124, 127, 242, 0.09) 34%,
+    transparent 62%
+  );
+
+  /* Fission Command is dark on ANY theme (design system rule) — these are
+     deliberately not overridden by the light theme. */
+  --palette-bg: #02142e;
+  --palette-line: rgba(255, 255, 255, 0.08);
+  --palette-hover: rgba(255, 255, 255, 0.07);
+  --palette-text: rgba(233, 238, 248, 0.92);
+  --palette-text-dim: rgba(196, 202, 218, 0.72);
+  --palette-text-faint: rgba(163, 171, 192, 0.5);
 
   color-scheme: dark;
 }
 
-/* Light theme — same token contract, tuned (not inverted) for perceptual
-   contrast: surfaces get lighter as they come nearer, accents deepen so
-   they hold their own against dark text, WCAG AA throughout. */
+/* Light theme — warm off-white, tuned (not inverted): surfaces lighten as
+   they come nearer, accents deepen to hold against warm-dark text. */
 html[data-theme="light"] {
-  --bg-base: #eef0f4;
-  --bg-surface: #f8f9fb;
+  --bg-base: #f4f2ee;
+  --bg-surface: #faf8f5;
   --bg-raised: #ffffff;
   --bg-overlay: #ffffff;
-  --bg-hover: #e8ebf1;
-  --bg-selected: #dfe5f3;
+  --bg-hover: #efece6;
+  --bg-selected: #e8e5f8;
 
-  --text-primary: rgba(24, 28, 36, 0.92);
-  --text-secondary: rgba(40, 46, 58, 0.72);
-  --text-muted: rgba(60, 68, 84, 0.52);
+  --text-primary: rgba(28, 25, 22, 0.92);
+  --text-secondary: rgba(48, 43, 37, 0.72);
+  --text-muted: rgba(72, 65, 56, 0.55);
 
   --accent: #5558d9;
   --accent-strong: #4548c9;
   --accent-dim: rgba(85, 88, 217, 0.12);
   --on-accent: #ffffff;
+
+  --accent-2: #b7860b;
+  --accent-2-strong: #9a7410;
+  --accent-2-dim: rgba(183, 134, 11, 0.14);
+  --on-accent-2: #ffffff;
+
   --success: #178a5c;
   --warning: #9a7410;
   --danger: #c03a35;
 
-  --border: rgba(20, 26, 40, 0.1);
-  --border-strong: rgba(20, 26, 40, 0.2);
+  --border: rgba(40, 33, 24, 0.1);
+  --border-strong: rgba(40, 33, 24, 0.2);
 
   --focus-ring: 0 0 0 2px rgba(70, 85, 196, 0.65);
+
+  --tag-violet-bg: rgba(85, 88, 217, 0.12);
+  --tag-violet-fg: #4f52c4;
+  --tag-amber-bg: rgba(154, 116, 16, 0.16);
+  --tag-amber-fg: #7d5e0e;
+  --tag-green-bg: rgba(23, 138, 92, 0.13);
+  --tag-green-fg: #147a51;
+  --tag-blue-bg: rgba(43, 111, 219, 0.12);
+  --tag-blue-fg: #2a63c4;
+  --tag-pink-bg: rgba(197, 74, 150, 0.12);
+  --tag-pink-fg: #b5468a;
+  --tag-gray-bg: rgba(60, 54, 44, 0.1);
+  --tag-gray-fg: #5c5346;
+
+  --dot-blue: #2b6fdb;
+  --dot-pink: #c54a96;
+  --dot-amber: #b7860b;
+  --dot-violet: #5558d9;
+
+  --wash-bottom: linear-gradient(
+    to top,
+    rgba(183, 134, 11, 0.05),
+    rgba(85, 88, 217, 0.06) 40%,
+    transparent 130px
+  );
 
   color-scheme: light;
 }
@@ -95,6 +173,9 @@ html[data-theme="light"] *::-webkit-scrollbar-thumb {
   --color-accent-strong: var(--accent-strong);
   --color-accent-dim: var(--accent-dim);
   --color-on-accent: var(--on-accent);
+  --color-gold: var(--accent-2);
+  --color-gold-strong: var(--accent-2-strong);
+  --color-gold-dim: var(--accent-2-dim);
   --color-ok: var(--success);
   --color-warn: var(--warning);
   --color-bad: var(--danger);
@@ -116,11 +197,12 @@ body {
   font-family: var(--font-sans);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
   overflow: hidden;
   user-select: none;
 }
 
-/* Visible keyboard focus everywhere (WCAG 2.4.7) */
+/* Visible keyboard focus everywhere (WCAG 2.4.7 / 2.2) */
 :focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
@@ -168,6 +250,15 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 16px;
+}
+
+/* The signature bottom wash — present, never loud. */
+.fm-wash::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--wash-bottom);
 }
 
 @keyframes zb-fade-in {

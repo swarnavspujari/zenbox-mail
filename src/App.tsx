@@ -1,12 +1,15 @@
 import { useEffect } from "react";
 import { backend, isTauri } from "@/lib/ipc";
-import { commandBindings } from "@/lib/commands";
+import { commandBindings, runCommandById } from "@/lib/commands";
 import { installKeyboard } from "@/lib/keyboard";
 import { startUpdateChecks, useUpdater } from "@/lib/updater";
 import { useMail } from "@/stores/mail";
 import { useProfiles, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { Avatar } from "@/components/Avatar";
+import { IconButton } from "@/components/Button";
+import { NavRail } from "@/components/NavRail";
+import { UndoToast } from "@/components/UndoToast";
 import { MailScreen } from "@/features/inbox/MailScreen";
 import { ThreadView } from "@/features/thread/ThreadView";
 import { Compose } from "@/features/compose/Compose";
@@ -57,9 +60,17 @@ export default function App() {
   const theme = useSettings((s) => s.settings.theme);
   const showShortcutBar = useSettings((s) => s.settings.showShortcutBar);
 
+  // The attribute must flip BEFORE React re-renders: HtmlBody bakes the
+  // current token values into its iframe srcDoc during render, and a zustand
+  // subscription fires synchronously on save while effects run after.
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+    document.documentElement.dataset.theme =
+      useSettings.getState().settings.theme;
+    return useSettings.subscribe((s, prev) => {
+      if (s.settings.theme !== prev.settings.theme)
+        document.documentElement.dataset.theme = s.settings.theme;
+    });
+  }, []);
 
   useEffect(() => {
     void useSettings
@@ -124,8 +135,20 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-base">
-      <header className="flex h-12 shrink-0 items-center gap-3 bg-base px-4">
+    <div className="fm-wash relative flex h-full bg-base">
+      <NavRail
+        view="mail"
+        onMail={() => {
+          useMail.getState().closeThread();
+          useUi.getState().setScreen("mail");
+        }}
+        onCalendar={() => {
+          const s = useSettings.getState();
+          void s.save({ calendarOpen: !s.settings.calendarOpen });
+        }}
+      />
+      <div className="flex min-w-0 flex-1 flex-col">
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-base px-3.5">
         <button
           className="rounded px-1.5 py-0.5 text-[15px] text-ink-3 hover:bg-hover hover:text-ink"
           onClick={() => {
@@ -136,11 +159,8 @@ export default function App() {
         >
           ☰
         </button>
-        <span className="flex items-center gap-2.5">
-          <span className="inline-block h-[15px] w-[15px] rotate-45 rounded-[4px] bg-accent" />
-          <span className="text-[15px] font-semibold tracking-tight text-ink">
-            Fission
-          </span>
+        <span className="whitespace-nowrap text-[15px] font-semibold tracking-tight text-ink">
+          Fission Mail
         </span>
         <div className="flex items-center gap-2 rounded-full border border-line bg-surface py-1 pl-1.5 pr-2 hover:border-line-strong">
           <ActiveAvatar email={accounts.active} />
@@ -194,12 +214,27 @@ export default function App() {
             Update failed — Retry
           </button>
         ) : null}
-        <button
-          className="rounded px-2 py-1 text-[12px] text-ink-2 hover:bg-hover"
+        <IconButton
+          label="Compose (C)"
+          onClick={() => runCommandById("compose")}
+        >
+          ✎
+        </IconButton>
+        <IconButton label="Search (/)" onClick={() => runCommandById("search")}>
+          ⌕
+        </IconButton>
+        <IconButton
+          label="Settings (Ctrl+,)"
           onClick={() => useUi.getState().setScreen("settings")}
         >
-          Settings
-        </button>
+          ⚙
+        </IconButton>
+        <IconButton
+          label="Toggle theme"
+          onClick={() => runCommandById("theme.toggle")}
+        >
+          {theme === "dark" ? "☾" : "☀"}
+        </IconButton>
       </header>
 
       <main className="relative min-h-0 flex-1">
@@ -219,35 +254,30 @@ export default function App() {
         {picker === "drafts" && <DraftsPicker />}
         {celebration && <Celebration />}
 
-        {toast && (
-          <div className="zb-pop-in pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 rounded-md border border-line-strong bg-overlay px-4 py-2 text-[13px] text-ink shadow-lg">
-            {toast}
-          </div>
-        )}
+        {toast && <UndoToast message={toast} />}
       </main>
 
       {showShortcutBar && (
-        <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-line bg-surface px-4 text-[11px] text-ink-3">
-          <span>
-            <span className="kbd">Ctrl+K</span> commands
+        <footer className="flex h-[30px] shrink-0 items-center justify-center gap-4 overflow-hidden border-t border-line bg-surface px-3 text-[11.5px] text-ink-3">
+          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            Hit <span className="kbd">E</span> Mark Done
           </span>
-          <span>
-            <span className="kbd">J</span>/<span className="kbd">K</span> navigate
+          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            Hit <span className="kbd">H</span> to set a reminder
           </span>
-          <span>
-            <span className="kbd">E</span> done
+          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            Hit <span className="kbd">C</span> to compose
           </span>
-          <span>
-            <span className="kbd">C</span> compose
+          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            Hit <span className="kbd">/</span> to search
           </span>
-          <span>
-            <span className="kbd">Tab</span> next split
-          </span>
-          <span>
-            <span className="kbd">?</span> ask AI
+          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+            Hit <span className="kbd">Ctrl</span>
+            <span className="kbd">K</span> for Fission Command
           </span>
         </footer>
       )}
+      </div>
     </div>
   );
 }
