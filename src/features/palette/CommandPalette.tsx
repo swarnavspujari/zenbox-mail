@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { allCommands, type Command } from "@/lib/commands";
+import { allCommands, runCommand, type Command } from "@/lib/commands";
 import { formatKeyExpr } from "@/lib/keyboard";
 import { useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
@@ -45,7 +45,7 @@ export function CommandPalette() {
 
   const runItem = (c: Command) => {
     useUi.getState().closePalette();
-    void c.run();
+    runCommand(c);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {

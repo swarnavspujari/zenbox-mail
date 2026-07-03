@@ -361,7 +361,10 @@ export function ThreadView() {
           reply · <span className="kbd">H</span> snooze
         </span>
       </div>
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-6 py-4">
+      <div
+        data-thread-scroll
+        className="min-h-0 flex-1 space-y-2 overflow-y-auto px-6 py-4"
+      >
         {messages.map((m, i) => (
           <MessageCard
             key={m.id}

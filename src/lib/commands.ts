@@ -4,7 +4,7 @@ import { backend } from "./ipc";
 import { useUpdater } from "./updater";
 import type { Binding } from "./keyboard";
 import { popUndo, pushUndo } from "./undo";
-import { useMail, visibleThreads } from "@/stores/mail";
+import { useMail } from "@/stores/mail";
 import { activeSignature, useSettings } from "@/stores/settings";
 import {
   actionTargetThreadId,
@@ -320,33 +320,15 @@ export function allCommands(): Command[] {
       id: "list.next",
       title: "Next Conversation",
       group: "Navigate",
-      when: () => onMailScreen(),
-      run: async () => {
-        const m = mail();
-        m.moveSelection(1);
-        if (m.openThreadId) {
-          const t = visibleThreads(useMail.getState())[
-            useMail.getState().selectedIndex
-          ];
-          if (t) await m.openThread(t.id);
-        }
-      },
+      when: () => inList(),
+      run: () => mail().moveSelection(1),
     },
     {
       id: "list.prev",
       title: "Previous Conversation",
       group: "Navigate",
-      when: () => onMailScreen(),
-      run: async () => {
-        const m = mail();
-        m.moveSelection(-1);
-        if (m.openThreadId) {
-          const t = visibleThreads(useMail.getState())[
-            useMail.getState().selectedIndex
-          ];
-          if (t) await m.openThread(t.id);
-        }
-      },
+      when: () => inList(),
+      run: () => mail().moveSelection(-1),
     },
     {
       id: "thread.unread",
@@ -418,6 +400,17 @@ export function allCommands(): Command[] {
       hidden: true,
       when: () => inThread() && ui().suggestions.length > 0,
       run: () => ui().cycleSuggestion(),
+    },
+    {
+      id: "thread.scrollDown",
+      title: "Scroll Message Down",
+      group: "Navigate",
+      hidden: true,
+      when: () => inThread(),
+      run: () => {
+        const el = document.querySelector<HTMLElement>("[data-thread-scroll]");
+        el?.scrollBy({ top: el.clientHeight * 0.5 });
+      },
     },
     {
       id: "goto.inbox",
@@ -674,13 +667,23 @@ useSettings.subscribe((state, prev) => {
   }
 });
 
+/** Run a command, surfacing any rejection as a toast instead of silence. */
+export function runCommand(c: Command) {
+  try {
+    const r = c.run();
+    if (r instanceof Promise) r.catch((e) => ui().showToast(String(e)));
+  } catch (e) {
+    ui().showToast(String(e));
+  }
+}
+
 export function commandBindings(): Binding[] {
   if (bindingsCache) return bindingsCache;
   const shortcuts = useSettings.getState().settings.shortcuts;
   bindingsCache = allCommands()
     .map((c) => ({
       expr: shortcuts[c.id] ?? "",
-      run: () => void c.run(),
+      run: () => runCommand(c),
       when: c.when,
       bypassOverlays: c.id === "palette.open",
     }))

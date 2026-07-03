@@ -65,6 +65,7 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "calendar.toggle": "",
   "shortcutBar.toggle": "",
   "thread.cycleSuggestion": "tab",
+  "thread.scrollDown": "space",
   back: "escape",
   "inbox.zeroSweep": "",
   "sync.now": "",

@@ -161,7 +161,15 @@ export const useMail = create<MailState>((set, get) => ({
         done: t ? [{ ...t, inInbox: false }, ...s.done] : s.done,
       };
     });
-    await backend.archiveThread(id);
+    try {
+      await backend.archiveThread(id);
+    } catch (e) {
+      // Rejected before any backend write (e.g. account not connected) —
+      // restore the row from the untouched DB, then let the caller surface it.
+      // (Remote Gmail failures reconcile separately via triage:error.)
+      await get().refresh();
+      throw e;
+    }
   },
 
   hide: async (id, reason) => {
