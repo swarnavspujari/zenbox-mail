@@ -200,6 +200,7 @@ pub fn default_settings() -> Settings {
         ("inbox.zeroSweep", ""),
         ("sync.now", ""),
         ("sync.resync", ""),
+        ("update.check", ""),
         ("settings.open", "mod+,"),
         // Alt+N leaves Ctrl+N free for browser-muscle-memory shortcuts and
         // matches the user's preference (v0.6 change; mod+N was the default

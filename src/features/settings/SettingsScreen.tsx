@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { backend, isTauri } from "@/lib/ipc";
 import { formatKeyExpr } from "@/lib/keyboard";
 import { allCommands } from "@/lib/commands";
+import { useUpdater } from "@/lib/updater";
 import { useMail } from "@/stores/mail";
 import { useProfiles, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
@@ -838,6 +839,38 @@ function CelebrationTab() {
 
 // ---------------------------------------------------------------- Appearance
 
+/** Manual update check + status. Auto-update also runs on boot / focus / every
+ *  4h; this surfaces the state (and any failure, which used to be invisible). */
+function UpdateControls() {
+  const status = useUpdater((s) => s.status);
+  const checking = useUpdater((s) => s.checking);
+  const ready = useUpdater((s) => s.ready);
+  const downloading = useUpdater((s) => s.downloading);
+  const error = useUpdater((s) => s.error);
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      {ready ? (
+        <button className={btnCls} onClick={() => void useUpdater.getState().restart()}>
+          Restart to install {ready}
+        </button>
+      ) : (
+        <button
+          className={btnGhost}
+          disabled={checking || !!downloading}
+          onClick={() => void useUpdater.getState().checkNow()}
+        >
+          {checking ? "Checking…" : downloading ? "Downloading…" : "Check for updates"}
+        </button>
+      )}
+      {status && (
+        <span className={`text-[12px] ${error ? "text-warn" : "text-ink-3"}`}>
+          {status}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function AppearanceTab() {
   const theme = useSettings((s) => s.settings.theme);
   const notifications = useSettings((s) => s.settings.notifications);
@@ -899,6 +932,13 @@ function AppearanceTab() {
         >
           {onboarded ? "Show the welcome tour again" : "Tour will show on the mail screen"}
         </button>
+      </Section>
+
+      <Section
+        title="Updates"
+        hint="Updates install themselves from GitHub Releases — on launch, when you refocus the window, and every few hours. Check manually here; failures show up instead of failing silently."
+      >
+        <UpdateControls />
       </Section>
     </>
   );

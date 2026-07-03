@@ -1,6 +1,7 @@
 // Every user action, defined once. The command palette lists these; the
 // keyboard engine binds them via the (remappable) shortcut map in settings.
 import { backend } from "./ipc";
+import { useUpdater } from "./updater";
 import type { Binding } from "./keyboard";
 import { popUndo, pushUndo } from "./undo";
 import { useMail, visibleThreads } from "@/stores/mail";
@@ -615,6 +616,15 @@ export function allCommands(): Command[] {
       title: "Settings",
       group: "General",
       run: () => ui().setScreen("settings"),
+    },
+    {
+      id: "update.check",
+      title: "Check for Updates",
+      group: "General",
+      run: async () => {
+        await useUpdater.getState().checkNow();
+        ui().showToast(useUpdater.getState().status ?? "Checked for updates");
+      },
     },
     {
       id: "back",

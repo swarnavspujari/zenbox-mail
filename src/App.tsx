@@ -49,6 +49,8 @@ export default function App() {
   const toast = useUi((s) => s.toast);
   const openThreadId = useMail((s) => s.openThreadId);
   const updateReady = useUpdater((s) => s.ready);
+  const updateDownloading = useUpdater((s) => s.downloading);
+  const updateError = useUpdater((s) => s.error);
   const loaded = useSettings((s) => s.loaded);
   const onboarded = useSettings((s) => s.settings.onboarded);
   const accounts = useSettings((s) => s.accounts);
@@ -161,15 +163,27 @@ export default function App() {
           </span>
         )}
         <div className="flex-1" />
-        {updateReady && (
+        {updateReady ? (
           <button
-            className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent hover:opacity-90"
+            className="zb-pop-in rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent hover:opacity-90"
             onClick={() => void useUpdater.getState().restart()}
-            title={`ZenBox ${updateReady} downloaded — restart to apply`}
+            title={`${updateReady} downloaded — restart to apply`}
           >
             Update ready — Restart
           </button>
-        )}
+        ) : updateDownloading ? (
+          <span className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink-3">
+            Downloading update…
+          </span>
+        ) : updateError ? (
+          <button
+            className="rounded-md border border-line-strong px-2.5 py-1 text-[12px] text-warn hover:bg-hover"
+            onClick={() => void useUpdater.getState().checkNow()}
+            title={updateError}
+          >
+            Update failed — Retry
+          </button>
+        ) : null}
         <button
           className="rounded px-2 py-1 text-[12px] text-ink-2 hover:bg-hover"
           onClick={() => useUi.getState().setScreen("settings")}
