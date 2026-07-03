@@ -2,7 +2,7 @@
 
 A **keyboard-first, AI-native desktop email client** in the spirit of Superhuman — built with Tauri v2 (Rust core + system webview), React, and your own AI keys. Local-first: your mail cache, your settings, and your API keys never leave your machine.
 
-> **Status:** v0.7 beta — Windows 11, auto-updating installer on the [Releases page](https://github.com/swarnavspujari/email-productivity-client/releases/latest). The same codebase targets macOS next, then iOS/Android via Tauri v2 mobile.
+> **Status:** v0.8 beta — Windows 11, auto-updating installer on the [Releases page](https://github.com/swarnavspujari/email-productivity-client/releases/latest). The same codebase targets macOS next, then iOS/Android via Tauri v2 mobile.
 
 *(screenshots/GIFs coming — run it and hit `Ctrl+K`)*
 
