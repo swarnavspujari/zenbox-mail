@@ -8,6 +8,7 @@ import { FolderSidebar } from "@/components/FolderSidebar";
 import { useUi } from "@/stores/ui";
 import { IconButton } from "@/components/Button";
 import { Label } from "@/components/Label";
+import { RestState } from "@/components/RestState";
 import type { Thread } from "@/lib/types";
 
 // Sender status dots — unread markers cycle so threads are tellable apart
@@ -347,18 +348,22 @@ export function MailScreen() {
             />
           ))}
           {loaded && threads.length === 0 && (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-ink-3">
-              <div className="text-4xl">◎</div>
-              <div className="text-[14px]">
-                {listView === "inbox" ? "This split is at zero." : "Nothing here."}
+            listView === "inbox" ? (
+              <RestState
+                headline="This split is at zero."
+                sub={
+                  <>
+                    Breathe. Or press <span className="kbd">Tab</span> for the
+                    next split.
+                  </>
+                }
+              />
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-ink-3">
+                <div className="text-4xl">◎</div>
+                <div className="text-[14px]">Nothing here.</div>
               </div>
-              {listView === "inbox" && (
-                <div className="text-[12px]">
-                  Breathe. Or press <span className="kbd">Tab</span> for the next
-                  split.
-                </div>
-              )}
-            </div>
+            )
           )}
         </div>
       </div>

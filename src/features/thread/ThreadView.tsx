@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { backend, isTauri } from "@/lib/ipc";
+import { backend, openExternal } from "@/lib/ipc";
 import { useMail } from "@/stores/mail";
 import { useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
@@ -26,15 +26,6 @@ function fmtWhen(ms: number): string {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-async function openExternal(url: string) {
-  if (isTauri) {
-    const { openUrl } = await import("@tauri-apps/plugin-opener");
-    await openUrl(url);
-  } else {
-    window.open(url, "_blank", "noopener");
-  }
 }
 
 /** Split plain text into the fresh part and the quoted trail. */

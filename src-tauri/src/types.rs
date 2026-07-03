@@ -121,6 +121,22 @@ pub struct ProfileInfo {
     pub picture: Option<String>,
 }
 
+/// Daily Unsplash photo for empty rest states. Attribution links arrive
+/// pre-tagged with the referral utm params; the UI hotlinks `url` and falls
+/// back to `cached_data_uri` offline.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyPhoto {
+    pub url: String,
+    pub blur_hash: Option<String>,
+    pub author_name: String,
+    pub author_link: Option<String>,
+    pub photo_link: Option<String>,
+    pub download_location: Option<String>,
+    pub cached_data_uri: Option<String>,
+    pub fetched_at: i64,
+}
+
 /// One event in the calendar side panel.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]

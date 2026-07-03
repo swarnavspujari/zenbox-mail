@@ -12,6 +12,8 @@ pub const AI_OPENAI: &str = "ai:openai";
 pub const AI_NIM: &str = "ai:nim";
 pub const GMAIL_CLIENT_ID: &str = "gmail:client_id";
 pub const GMAIL_CLIENT_SECRET: &str = "gmail:client_secret";
+/// BYO Unsplash Access Key — overrides the baked one when present.
+pub const UNSPLASH_ACCESS_KEY: &str = "unsplash:access_key";
 /// v0.1 single-account name; kept as a read fallback.
 pub const GMAIL_REFRESH_TOKEN_LEGACY: &str = "gmail:refresh_token";
 

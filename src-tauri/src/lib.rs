@@ -5,6 +5,7 @@ mod mail;
 mod secrets;
 mod store;
 mod types;
+mod unsplash;
 
 use mail::gmail::GmailSession;
 use rusqlite::Connection;
@@ -361,6 +362,97 @@ fn refresh_calendar(
     }
     spawn_calendar_refresh(app, active.email, fetch_start, fetch_end);
     Ok(())
+}
+
+/// The daily Unsplash photo for empty rest states: cached 24h, stale-if-error,
+/// hard-capped at 50 API requests/hour locally.
+#[tauri::command]
+async fn get_daily_photo(state: State<'_, AppState>) -> Result<Option<DailyPhoto>, String> {
+    let (cached, key) = {
+        let conn = state.db.lock().unwrap();
+        (
+            store::get_json::<unsplash::CachedPhoto>(&conn, unsplash::KV_PHOTO),
+            unsplash::access_key(),
+        )
+    };
+    if let Some(c) = &cached {
+        if now_ms() - c.photo.fetched_at < unsplash::DAY_MS {
+            return Ok(Some(c.photo.clone()));
+        }
+    }
+    let Some(key) = key else {
+        return Ok(cached.map(|c| c.photo));
+    };
+    {
+        let conn = state.db.lock().unwrap();
+        if !unsplash::take_rate_token(&conn, now_ms()) {
+            return Ok(cached.map(|c| c.photo));
+        }
+    }
+    match unsplash::fetch_daily(&state.http, &key, now_ms()).await {
+        Ok(photo) => {
+            let conn = state.db.lock().unwrap();
+            let _ = store::set_json(
+                &conn,
+                unsplash::KV_PHOTO,
+                &unsplash::CachedPhoto { photo: photo.clone(), download_triggered: false },
+            );
+            Ok(Some(photo))
+        }
+        Err(e) => {
+            // stale-if-error: yesterday's photo beats an error in a rest state
+            eprintln!("[unsplash] fetch failed: {e}");
+            Ok(cached.map(|c| c.photo))
+        }
+    }
+}
+
+/// Unsplash guideline: GET links.download_location the first time a photo is
+/// actually shown. Fires once per cached photo.
+#[tauri::command]
+async fn photo_shown(state: State<'_, AppState>) -> Result<(), String> {
+    let (cached, key) = {
+        let conn = state.db.lock().unwrap();
+        (
+            store::get_json::<unsplash::CachedPhoto>(&conn, unsplash::KV_PHOTO),
+            unsplash::access_key(),
+        )
+    };
+    let Some(mut c) = cached else { return Ok(()) };
+    if c.download_triggered {
+        return Ok(());
+    }
+    let (Some(loc), Some(key)) = (c.photo.download_location.clone(), key) else {
+        return Ok(());
+    };
+    c.download_triggered = true;
+    {
+        let conn = state.db.lock().unwrap();
+        let _ = store::set_json(&conn, unsplash::KV_PHOTO, &c);
+    }
+    let _ = state
+        .http
+        .get(&loc)
+        .header("Authorization", format!("Client-ID {key}"))
+        .header("Accept-Version", "v1")
+        .send()
+        .await;
+    Ok(())
+}
+
+/// BYO Unsplash Access Key: stored in the OS keychain, overrides the baked
+/// key; an empty string clears it.
+#[tauri::command]
+fn set_unsplash_key(key: String) -> Result<(), String> {
+    let k = key.trim();
+    if k.is_empty() {
+        secrets::delete(secrets::UNSPLASH_ACCESS_KEY);
+        return Ok(());
+    }
+    if k.len() > 200 {
+        return Err("that does not look like an Unsplash Access Key".into());
+    }
+    secrets::set(secrets::UNSPLASH_ACCESS_KEY, k)
 }
 
 #[tauri::command]
@@ -1849,6 +1941,9 @@ pub fn run() {
             set_profile_photo,
             list_events,
             refresh_calendar,
+            get_daily_photo,
+            photo_shown,
+            set_unsplash_key,
             get_settings,
             save_settings,
             get_knowledge_base,

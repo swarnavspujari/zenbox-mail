@@ -7,6 +7,7 @@ import type {
   AccountsState,
   AiProviderId,
   CalendarEvent,
+  DailyPhoto,
   DraftEntry,
   DraftRequest,
   ProfileInfo,
@@ -101,6 +102,13 @@ export interface Backend {
   /** Kick a background fetch of fresh events around the range (throttled). */
   refreshCalendar(startMs: number, endMs: number): Promise<void>;
 
+  /** Daily Unsplash photo for empty rest states (null when unavailable). */
+  getDailyPhoto(): Promise<DailyPhoto | null>;
+  /** Report the photo was shown — triggers Unsplash's download event once. */
+  photoShown(): Promise<void>;
+  /** Store (or clear with "") a BYO Unsplash Access Key in the keychain. */
+  setUnsplashKey(key: string): Promise<void>;
+
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
   getKnowledgeBase(): Promise<KnowledgeBase>;
@@ -130,6 +138,16 @@ export interface Backend {
 
 export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/** Open a URL in the system browser (Tauri) or a new tab (browser demo). */
+export async function openExternal(url: string) {
+  if (isTauri) {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(url);
+  } else {
+    window.open(url, "_blank", "noopener");
+  }
+}
 
 let aiRequestSeq = 1;
 
@@ -244,6 +262,15 @@ class TauriBackend implements Backend {
   }
   refreshCalendar(startMs: number, endMs: number) {
     return invoke<void>("refresh_calendar", { startMs, endMs });
+  }
+  getDailyPhoto() {
+    return invoke<DailyPhoto | null>("get_daily_photo");
+  }
+  photoShown() {
+    return invoke<void>("photo_shown");
+  }
+  setUnsplashKey(key: string) {
+    return invoke<void>("set_unsplash_key", { key });
   }
   getSettings() {
     return invoke<Settings>("get_settings");

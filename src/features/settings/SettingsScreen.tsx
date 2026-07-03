@@ -935,12 +935,56 @@ function AppearanceTab() {
       </Section>
 
       <Section
+        title="Daily photo"
+        hint="Empty splits show a calm daily photo from Unsplash (fetched once a day by the Rust core, never from the web bundle). A built-in key ships with the app; paste your own Unsplash Access Key here to use it instead — it lives in the Windows Credential Manager."
+      >
+        <UnsplashKeyControls />
+      </Section>
+
+      <Section
         title="Updates"
         hint="Updates install themselves from GitHub Releases — on launch, when you refocus the window, and every few hours. Check manually here; failures show up instead of failing silently."
       >
         <UpdateControls />
       </Section>
     </>
+  );
+}
+
+function UnsplashKeyControls() {
+  const [key, setKey] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <input
+          type="password"
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          placeholder="Unsplash Access Key (blank = built-in)"
+          className={inputCls}
+        />
+        <button
+          className={btnGhost}
+          onClick={() => {
+            void backend
+              .setUnsplashKey(key)
+              .then(() => {
+                setStatus(
+                  key.trim()
+                    ? "Key saved to OS keychain."
+                    : "Custom key cleared — using the built-in key."
+                );
+                setKey("");
+              })
+              .catch((e) => setStatus(String(e)));
+          }}
+        >
+          Save
+        </button>
+      </div>
+      {status && <div className="text-[12px] text-ink-3">{status}</div>}
+    </div>
   );
 }
 

@@ -45,6 +45,10 @@ jobs:
           # also falls back to the legacy ZENBOX_* env for older builds.
           FISSION_GMAIL_CLIENT_ID: ${{ secrets.ZENBOX_GMAIL_CLIENT_ID }}
           FISSION_GMAIL_CLIENT_SECRET: ${{ secrets.ZENBOX_GMAIL_CLIENT_SECRET }}
+          # Baked Unsplash Access Key for the daily empty-state photo
+          # (optional — builds without it just skip the photo; users can
+          # paste their own key in Settings).
+          FISSION_UNSPLASH_ACCESS_KEY: ${{ secrets.FISSION_UNSPLASH_ACCESS_KEY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Fission Mail ${{ github.ref_name }}"

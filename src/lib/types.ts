@@ -119,6 +119,18 @@ export interface ProfileInfo {
   picture: string | null;
 }
 
+/** Daily Unsplash photo for empty rest states. Links come utm-tagged. */
+export interface DailyPhoto {
+  url: string;
+  blurHash: string | null;
+  authorName: string;
+  authorLink: string | null;
+  photoLink: string | null;
+  downloadLocation: string | null;
+  cachedDataUri: string | null;
+  fetchedAt: number;
+}
+
 /** One event in the calendar side panel. */
 export interface CalendarEvent {
   id: string;

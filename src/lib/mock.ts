@@ -666,6 +666,23 @@ export class MockBackend implements Backend {
     for (const cb of this.calendarListeners) cb(null);
   }
 
+  // The Unsplash key lives in the Rust core only; the browser demo serves a
+  // bundled scene so the empty-state layout is still demoable.
+  async getDailyPhoto() {
+    return {
+      url: "/inbox-zero/quiet-lake.svg",
+      blurHash: null,
+      authorName: "Fission demo art",
+      authorLink: null,
+      photoLink: null,
+      downloadLocation: null,
+      cachedDataUri: null,
+      fetchedAt: Date.now(),
+    };
+  }
+  async photoShown() {}
+  async setUnsplashKey() {}
+
   onMailUpdated(cb: () => void): () => void {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
