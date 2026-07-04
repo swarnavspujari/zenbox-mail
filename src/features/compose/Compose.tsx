@@ -8,6 +8,7 @@ import { useSettings } from "@/stores/settings";
 import { outgoingFromCompose, useUi } from "@/stores/ui";
 import { sanitizeUserHtml } from "@/lib/sanitize";
 import { LintedBody } from "./SpellCheck";
+import { RecipientInput } from "./RecipientInput";
 import type { MailAttachment } from "@/lib/types";
 
 const UNDO_SEND_MS = 10_000;
@@ -282,20 +283,15 @@ export function Compose() {
 
         <div className="flex items-center gap-2 border-b border-line px-4 py-2">
           <label className="w-8 text-[12px] text-ink-3">To</label>
-          <input
+          <RecipientInput
             value={compose.to}
-            onChange={(e) => patch({ to: e.target.value })}
-            className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-ink-3"
-            placeholder="recipient@example.com"
+            onChange={(to) => patch({ to })}
+            placeholder="Start typing a name or email…"
           />
         </div>
         <div className="flex items-center gap-2 border-b border-line px-4 py-2">
           <label className="w-8 text-[12px] text-ink-3">Cc</label>
-          <input
-            value={compose.cc}
-            onChange={(e) => patch({ cc: e.target.value })}
-            className="flex-1 bg-transparent text-[13px] text-ink outline-none"
-          />
+          <RecipientInput value={compose.cc} onChange={(cc) => patch({ cc })} />
         </div>
         <div className="flex items-center gap-2 border-b border-line px-4 py-2">
           <label className="w-8 text-[12px] text-ink-3">Subj</label>

@@ -76,6 +76,8 @@ Attachments: **📎 Attach** in compose (25 MB total). In the reading pane, clic
 
 Spelling & grammar: the compose body is checked locally by **Harper** (nothing leaves the machine). Misspellings get a wavy underline — put the caret in one to see suggestions, click one to apply, `×` to ignore.
 
+Recipients: start typing a name or email in **To**/**Cc** and the closest contacts you've corresponded with drop down (ranked by frequency + recency). `↓`/`↑` move, `Enter`/`Tab` or a click fills in `Name <email>`, `Esc` closes the dropdown. Contacts are derived locally from your synced mail — no extra Google permission.
+
 ## Palette-only
 
 - **Get Me To Zero (bulk archive)…** · **Sync Now** · **Toggle Folder Sidebar** · **Toggle Calendar Panel** · **Switch to <account>** (also Alt+N)
@@ -119,3 +121,4 @@ Launch `npm run app:dev`, then:
 28. [ ] Empty a split → the rest state shows the daily photo with "Photo by … on Unsplash" attribution (built-in key; Settings → Appearance accepts your own)
 29. [ ] Compose → type "recieve" → wavy underline appears; caret inside it → suggestion chips; clicking "receive" fixes the word
 30. [ ] Toggle light theme → whole app retints (warm off-white), the palette stays dark, HTML mail re-renders on light tokens
+31. [ ] Compose → type a name/email fragment in To (e.g. "maya") → a contact dropdown appears; ↓/Enter or click fills "Maya Chen <maya@…>, "; a second fragment suggests without clobbering the first

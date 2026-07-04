@@ -468,6 +468,19 @@ fn set_unsplash_key(key: String) -> Result<(), String> {
     secrets::set(secrets::UNSPLASH_ACCESS_KEY, k)
 }
 
+/// Recipient autocomplete: ranked contacts the active account has written to
+/// or heard from, matching the typed query. Local-only (derived from synced
+/// mail — no People-API scope).
+#[tauri::command]
+fn search_contacts(state: State<'_, AppState>, query: String) -> Result<Vec<Contact>, String> {
+    if query.len() > 200 {
+        return Ok(vec![]);
+    }
+    let conn = state.db.lock().unwrap();
+    let active = store::get_accounts(&conn).active;
+    Ok(store::search_contacts(&conn, &active, &query, 8))
+}
+
 #[tauri::command]
 fn get_profile(state: State<'_, AppState>, email: String) -> Option<ProfileInfo> {
     store::get_json(&state.db.lock().unwrap(), &format!("profile:{email}"))
@@ -1958,6 +1971,7 @@ pub fn run() {
             photo_shown,
             set_unsplash_key,
             lint_text,
+            search_contacts,
             get_settings,
             save_settings,
             get_knowledge_base,

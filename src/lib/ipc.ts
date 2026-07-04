@@ -7,6 +7,7 @@ import type {
   AccountsState,
   AiProviderId,
   CalendarEvent,
+  Contact,
   DailyPhoto,
   DraftEntry,
   DraftRequest,
@@ -112,6 +113,9 @@ export interface Backend {
 
   /** Offline Harper spell/grammar check of compose text. */
   lintText(text: string): Promise<LintHit[]>;
+
+  /** Ranked recipient suggestions for a typed query (from synced mail). */
+  searchContacts(query: string): Promise<Contact[]>;
 
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
@@ -278,6 +282,9 @@ class TauriBackend implements Backend {
   }
   lintText(text: string) {
     return invoke<LintHit[]>("lint_text", { text });
+  }
+  searchContacts(query: string) {
+    return invoke<Contact[]>("search_contacts", { query });
   }
   getSettings() {
     return invoke<Settings>("get_settings");

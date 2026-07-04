@@ -128,6 +128,27 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
         CREATE INDEX IF NOT EXISTS idx_events_time ON events(account_id, start_ms);",
     )
     .map_err(|e| e.to_string())?;
+    // v0.9: contact index for recipient autocomplete, derived from every
+    // person the account has corresponded with (senders + recipients). freq
+    // ranks how often they appear; last_seen breaks ties toward recency.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS contacts (
+            account_id TEXT NOT NULL,
+            email TEXT NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            freq INTEGER NOT NULL DEFAULT 0,
+            last_seen INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (account_id, email)
+        );
+        CREATE INDEX IF NOT EXISTS idx_contacts_rank ON contacts(account_id, freq);",
+    )
+    .map_err(|e| e.to_string())?;
+    // Backfill the index once from mail that synced before this version.
+    // Idempotent + gated so it doesn't rescan on every launch.
+    if get_json::<bool>(&conn, "contacts_built_v1") != Some(true) {
+        backfill_contacts(&conn)?;
+        let _ = set_json(&conn, "contacts_built_v1", &true);
+    }
     Ok(conn)
 }
 
@@ -605,6 +626,14 @@ pub fn upsert_thread(
                 params![m.thread_id, m.subject, format!("{} {}", m.from_name, m.from), m.body_text],
             )
             .map_err(|e| e.to_string())?;
+            // Index everyone on a first-seen message so freq counts distinct
+            // messages (re-syncs of the same message never double-count).
+            index_contact(conn, account_id, &m.from_name, &m.from, m.date);
+            for addr in m.to.iter().chain(m.cc.iter()) {
+                if let Some((name, email)) = parse_addr(addr) {
+                    index_contact(conn, account_id, &name, &email, m.date);
+                }
+            }
         } else if existing_body.as_deref().map(str::trim).unwrap_or("").is_empty()
             && !m.body_text.trim().is_empty()
         {
@@ -1043,6 +1072,112 @@ pub fn rename_thread_labels(
         }
     }
     Ok(changed)
+}
+
+// ---------------------------------------------------------------- contacts
+
+/// Parse a recipient header value into (name, email). Handles "Name <email>",
+/// "<email>", and a bare address; returns None if there's no address.
+fn parse_addr(raw: &str) -> Option<(String, String)> {
+    let raw = raw.trim();
+    if let Some(lt) = raw.rfind('<') {
+        if let Some(rel_gt) = raw[lt..].find('>') {
+            let email = raw[lt + 1..lt + rel_gt].trim().to_lowercase();
+            if email.contains('@') {
+                let name = raw[..lt].trim().trim_matches('"').trim().to_string();
+                return Some((name, email));
+            }
+        }
+    }
+    if raw.contains('@') && !raw.contains(char::is_whitespace) {
+        return Some((String::new(), raw.to_lowercase()));
+    }
+    None
+}
+
+/// Record one appearance of a contact: bump freq, keep the most recent
+/// last_seen, and fill in a name if we didn't have one.
+fn index_contact(conn: &Connection, account_id: &str, name: &str, email: &str, date: i64) {
+    let email = email.trim().to_lowercase();
+    if !email.contains('@') || email.len() > 254 {
+        return;
+    }
+    let name = name.trim();
+    let _ = conn.execute(
+        "INSERT INTO contacts (account_id, email, name, freq, last_seen)
+         VALUES (?1, ?2, ?3, 1, ?4)
+         ON CONFLICT(account_id, email) DO UPDATE SET
+            freq = freq + 1,
+            last_seen = MAX(last_seen, excluded.last_seen),
+            name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE contacts.name END",
+        params![account_id, email, name, date],
+    );
+}
+
+/// One-time build of the contact index from mail synced before v0.9.
+fn backfill_contacts(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT t.account_id, m.from_name, m.from_addr, m.to_addrs, m.cc_addrs, m.date
+             FROM messages m JOIN threads t ON t.id = m.thread_id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<(String, String, String, String, String, i64)> = stmt
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    for (account_id, from_name, from_addr, to_json, cc_json, date) in rows {
+        index_contact(conn, &account_id, &from_name, &from_addr, date);
+        for json in [&to_json, &cc_json] {
+            if let Ok(addrs) = serde_json::from_str::<Vec<String>>(json) {
+                for addr in addrs {
+                    if let Some((name, email)) = parse_addr(&addr) {
+                        index_contact(conn, &account_id, &name, &email, date);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Ranked recipient suggestions for a typed query: prefix matches on name or
+/// email first, then by how often the contact appears and how recently. The
+/// account's own address is excluded (you don't autocomplete yourself).
+pub fn search_contacts(
+    conn: &Connection,
+    account_id: &str,
+    query: &str,
+    limit: usize,
+) -> Vec<Contact> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return vec![];
+    }
+    let esc = q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    let sub = format!("%{esc}%");
+    let pre = format!("{esc}%");
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT email, name FROM contacts
+         WHERE account_id = ?1 AND email <> ?2
+           AND (lower(name) LIKE ?3 ESCAPE '\\' OR email LIKE ?3 ESCAPE '\\')
+         ORDER BY
+           CASE WHEN lower(name) LIKE ?4 ESCAPE '\\' OR email LIKE ?4 ESCAPE '\\'
+                THEN 0 ELSE 1 END,
+           freq DESC, last_seen DESC
+         LIMIT ?5",
+    ) else {
+        return vec![];
+    };
+    stmt.query_map(
+        params![account_id, account_id.to_lowercase(), sub, pre, limit as i64],
+        |r| Ok(Contact { email: r.get(0)?, name: r.get(1)? }),
+    )
+    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+    .unwrap_or_default()
 }
 
 /// Locally-trashed thread ids for one account (sync diffs these against the

@@ -127,6 +127,12 @@ export interface LintHit {
   suggestions: string[];
 }
 
+/** A person the account has corresponded with — recipient autocomplete. */
+export interface Contact {
+  name: string;
+  email: string;
+}
+
 /** Daily Unsplash photo for empty rest states. Links come utm-tagged. */
 export interface DailyPhoto {
   url: string;

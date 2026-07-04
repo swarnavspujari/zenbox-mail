@@ -121,6 +121,14 @@ pub struct ProfileInfo {
     pub picture: Option<String>,
 }
 
+/// A person the account has corresponded with — recipient autocomplete.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Contact {
+    pub name: String,
+    pub email: String,
+}
+
 /// Daily Unsplash photo for empty rest states. Attribution links arrive
 /// pre-tagged with the referral utm params; the UI hotlinks `url` and falls
 /// back to `cached_data_uri` offline.

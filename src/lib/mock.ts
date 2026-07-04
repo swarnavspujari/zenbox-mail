@@ -683,6 +683,51 @@ export class MockBackend implements Backend {
   async photoShown() {}
   async setUnsplashKey() {}
 
+  /** Recipient autocomplete from the demo corpus: everyone the active
+   *  account has sent to or heard from, ranked like the Rust core. */
+  async searchContacts(query: string) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const me = this.state.activeAccount.toLowerCase();
+    // aggregate name+email + freq across all messages in the active account
+    const idx = new Map<string, { name: string; email: string; freq: number }>();
+    const add = (name: string, rawEmail: string) => {
+      const email = rawEmail.trim().toLowerCase();
+      if (!email.includes("@") || email === me) return;
+      const cur = idx.get(email);
+      if (cur) {
+        cur.freq++;
+        if (!cur.name && name) cur.name = name;
+      } else {
+        idx.set(email, { name: name.trim(), email, freq: 1 });
+      }
+    };
+    const parseAddr = (raw: string): [string, string] => {
+      const m = raw.match(/^\s*"?([^"<]*)"?\s*<([^>]+)>/);
+      if (m) return [m[1].trim(), m[2].trim()];
+      return ["", raw.trim()];
+    };
+    for (const t of this.threads) {
+      if (!this.inActiveAccount(t)) continue;
+      for (const msg of this.messages.get(t.id) ?? []) {
+        add(msg.fromName, msg.from);
+        for (const addr of [...msg.to, ...msg.cc]) {
+          const [name, email] = parseAddr(addr);
+          add(name, email);
+        }
+      }
+    }
+    const hits = [...idx.values()].filter(
+      (c) => c.name.toLowerCase().includes(q) || c.email.includes(q)
+    );
+    hits.sort((a, b) => {
+      const ap = a.name.toLowerCase().startsWith(q) || a.email.startsWith(q) ? 0 : 1;
+      const bp = b.name.toLowerCase().startsWith(q) || b.email.startsWith(q) ? 0 : 1;
+      return ap - bp || b.freq - a.freq;
+    });
+    return hits.slice(0, 8).map(({ name, email }) => ({ name, email }));
+  }
+
   /** Tiny stand-in for Harper: a fixed misspelling list so the demo shows
    *  the underline + click-to-fix flow. The desktop app lints for real. */
   async lintText(text: string) {
