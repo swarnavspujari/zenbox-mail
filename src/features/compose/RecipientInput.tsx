@@ -77,7 +77,10 @@ export function RecipientInput({
     const el = inputRef.current;
     const caret = el?.selectionStart ?? caretRef.current;
     const tok = tokenAt(value, caret);
-    const formatted = c.name ? `${c.name} <${c.email}>` : c.email;
+    // The send path splits recipients on , and ; — a name containing either
+    // would break it, so fall back to the bare email in that (rare) case.
+    const safeName = c.name && !/[,;]/.test(c.name) ? c.name : "";
+    const formatted = safeName ? `${safeName} <${c.email}>` : c.email;
     const head = value.slice(0, tok.start).trimEnd();
     const tail = value.slice(tok.end).replace(/^[\s,;]+/, "");
     const next = `${head ? head + " " : ""}${formatted}, ${tail}`;
