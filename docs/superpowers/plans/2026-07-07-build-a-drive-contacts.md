@@ -8,6 +8,8 @@
 
 **Tech stack:** Tauri v2 (raw invoke bodies for oversized bytes), reqwest, rusqlite, React/TS, TipTap.
 
+**Baseline correction (build-time discovery):** the spec's v0.11.2 baseline was stale — releases v0.12.0→v0.14.0 shipped from a side branch and never merged to main (beta users run 0.14.0). This branch was rebased onto **v0.14.0** (`26a78a5`). Composer anchors changed: the shells decomposed into shared `ComposeShell.tsx` + `RecipientFields.tsx` + `AttachmentChips.tsx` + `ComposeActionBar.tsx` + `ComposeAiBar.tsx` — A2/A3 edits land there (once, not per-shell). v0.13 added `undoSendSeconds` + outbox claim + `sendMailNow`/`sendOutboxNow` (share-on-send must run before BOTH send paths); v0.14 added `shortcuts-catalog.ts` (new command gets a catalog entry) and keymap changes. **Version bump target is 0.15.0**, not 0.12.0.
+
 ---
 
 ## Resolved §9 mechanism decisions (verified against current docs 2026-07-07)
