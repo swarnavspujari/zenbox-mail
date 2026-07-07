@@ -195,6 +195,9 @@ interface UiState {
   aiBarOpen: boolean;
   /** Ask-AI overlay over the current thread (?). */
   askAiOpen: boolean;
+  /** Keyboard-shortcuts reference panel in the right-hand dock (Ctrl+K →
+   *  "Keyboard Shortcuts"). Session state, deliberately not persisted. */
+  shortcutsOpen: boolean;
 
   setScreen: (s: Screen) => void;
   setFocusRegion: (r: FocusRegion) => void;
@@ -211,6 +214,7 @@ interface UiState {
   cycleSuggestion: () => void;
   setAiBarOpen: (open: boolean) => void;
   setAskAiOpen: (open: boolean) => void;
+  setShortcutsOpen: (open: boolean) => void;
   setPendingSend: (p: PendingSend | null) => void;
   clearPendingSend: () => void;
   /** Called after any archive-ish action: fires the celebration if the
@@ -244,6 +248,7 @@ export const useUi = create<UiState>((set, get) => ({
   suggestionIndex: null,
   aiBarOpen: false,
   askAiOpen: false,
+  shortcutsOpen: false,
 
   setScreen: (s) =>
     set({
@@ -273,6 +278,7 @@ export const useUi = create<UiState>((set, get) => ({
     }),
   setAiBarOpen: (open) => set({ aiBarOpen: open }),
   setAskAiOpen: (open) => set({ askAiOpen: open }),
+  setShortcutsOpen: (open) => set({ shortcutsOpen: open }),
   setPendingSend: (p) => set({ pendingSend: p }),
   clearPendingSend: () => set({ pendingSend: null }),
 

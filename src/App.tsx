@@ -26,6 +26,7 @@ import { DraftsPicker } from "@/features/pickers/DraftsPicker";
 import { Celebration } from "@/features/zero/Celebration";
 import { SearchScreen } from "@/features/search/SearchScreen";
 import { SettingsScreen } from "@/features/settings/SettingsScreen";
+import { ShortcutsPanel } from "@/features/shortcuts/ShortcutsPanel";
 import { AskAi } from "@/features/thread/AskAi";
 import { Onboarding } from "@/features/onboarding/Onboarding";
 
@@ -52,6 +53,7 @@ export default function App() {
   const celebration = useUi((s) => s.celebration);
   const compose = useUi((s) => s.compose);
   const askAiOpen = useUi((s) => s.askAiOpen);
+  const shortcutsOpen = useUi((s) => s.shortcutsOpen);
   const toast = useUi((s) => s.toast);
   const pendingSend = useUi((s) => s.pendingSend);
   const openThreadId = useMail((s) => s.openThreadId);
@@ -243,7 +245,11 @@ export default function App() {
         </IconButton>
       </header>
 
-      <main className="relative min-h-0 flex-1">
+      {/* The shortcuts panel docks OUTSIDE <main> so it stays put across
+          screens and thread views — the same right-hand slot the calendar
+          panel occupies inside MailScreen. */}
+      <div className="flex min-h-0 flex-1">
+      <main className="relative min-w-0 flex-1">
         {screen === "mail" && !openThreadId && <MailScreen />}
         {screen === "mail" && openThreadId && <ThreadView />}
         {screen === "calendar" && <CalendarWeek />}
@@ -272,6 +278,8 @@ export default function App() {
           </div>
         )}
       </main>
+      {shortcutsOpen && <ShortcutsPanel />}
+      </div>
 
       {showShortcutBar && (
         <footer className="flex h-[30px] shrink-0 items-center justify-center gap-4 overflow-hidden border-t border-line bg-surface px-3 text-[11.5px] text-ink-3">

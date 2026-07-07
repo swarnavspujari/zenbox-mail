@@ -53,31 +53,54 @@ export function eventToken(e: KeyboardEvent): string | null {
   return parts.join("+");
 }
 
+function isMacPlatform(): boolean {
+  return typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent);
+}
+
+function formatKeyToken(p: string, isMac: boolean): string {
+  if (p === "mod") return isMac ? "⌘" : "Ctrl";
+  if (p === "shift") return "Shift";
+  if (p === "alt") return "Alt";
+  if (p === "escape") return "Esc";
+  if (p === "enter") return "Enter";
+  if (p === "tab") return "Tab";
+  if (p === "space") return "Space";
+  if (p === "down") return "↓";
+  if (p === "up") return "↑";
+  if (p === "left") return "←";
+  if (p === "right") return "→";
+  if (p === "backspace") return "Backspace";
+  if (p === "delete") return "Del";
+  return p.length === 1 ? p.toUpperCase() : p;
+}
+
 export function formatKeyExpr(expr: string): string {
   if (!expr) return "";
-  const first = expr.split("|")[0];
-  const isMac =
-    typeof navigator !== "undefined" && /mac/i.test(navigator.userAgent);
-  return first
+  const isMac = isMacPlatform();
+  return expr
+    .split("|")[0]
     .split(" ")
     .map((part) =>
       part
         .split("+")
-        .map((p) => {
-          if (p === "mod") return isMac ? "⌘" : "Ctrl";
-          if (p === "shift") return "Shift";
-          if (p === "alt") return "Alt";
-          if (p === "escape") return "Esc";
-          if (p === "enter") return "Enter";
-          if (p === "tab") return "Tab";
-          if (p === "space") return "Space";
-          if (p === "down") return "↓";
-          if (p === "up") return "↑";
-          return p.length === 1 ? p.toUpperCase() : p;
-        })
+        .map((p) => formatKeyToken(p, isMac))
         .join("+")
     )
     .join(" then ");
+}
+
+/** One keycap label per chip for the shortcuts panel — "mod+shift+c" →
+ *  ["Ctrl","Shift","C"]; chords insert a literal "then" separator: "g i" →
+ *  ["G","then","I"]. Takes a single alternative (no "|" handling). */
+export function exprKeycaps(expr: string): string[] {
+  if (!expr) return [];
+  const isMac = isMacPlatform();
+  const chips: string[] = [];
+  expr.split(" ").forEach((part, i) => {
+    if (i > 0) chips.push("then");
+    for (const p of part.split("+")) chips.push(formatKeyToken(p, isMac));
+  });
+  return chips;
 }
 
 interface Installed {

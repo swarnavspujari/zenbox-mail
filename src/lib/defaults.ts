@@ -39,7 +39,8 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "thread.star": "s",
   "thread.trash": "#|delete|backspace",
   "thread.spam": "!",
-  "thread.mute": "m",
+  // Shift+M matches Superhuman; bare M stays reserved for their Comment key.
+  "thread.mute": "shift+m",
   "thread.unsubscribe": "mod+u",
   undo: "z|mod+z",
   // J/K change conversation everywhere; arrows scroll the open email (reader)
@@ -52,7 +53,8 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "reader.lineUp": "up",
   "reader.pageUp": "shift+space",
   "thread.unread": "u",
-  "thread.move": "v",
+  // V = Move, L = Add/Remove Label in Superhuman; both open our picker.
+  "thread.move": "v|l",
   search: "/",
   "ai.ask": "?",
   "split.next": "tab",
@@ -62,7 +64,8 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "goto.done": "g e",
   "goto.reminders": "g h",
   "goto.starred": "g s",
-  "goto.trash": "g t",
+  // Superhuman's Trash chord is G-#; G-T stays ours until a Sent view lands.
+  "goto.trash": "g t|g #",
   "goto.drafts": "g d",
   "compose.ai": "mod+j",
   "compose.send": "mod+enter",
@@ -81,13 +84,16 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   // Accelerate a pending send (skip the Undo Send window, send instantly).
   "send.accelerate": "mod+shift+z",
   "theme.toggle": "",
-  "calendar.toggle": "",
-  "calendar.open": "g c",
-  "calendar.prevDay": "left",
-  "calendar.nextDay": "right",
+  // Superhuman calendar keys: 0 opens the day view, 2 the week; -/= move
+  // days while the calendar owns focus (our ←/→ still work).
+  "calendar.toggle": "0",
+  "calendar.open": "g c|2",
+  "calendar.prevDay": "left|-",
+  "calendar.nextDay": "right|=",
   "calendar.today": "",
   "sidebar.toggle": "",
   "shortcutBar.toggle": "",
+  "shortcuts.show": "",
   "list.selectAll": "mod+a",
   "list.toggleSelect": "x",
   "thread.cycleSuggestion": "tab",

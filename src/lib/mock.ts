@@ -101,6 +101,20 @@ function loadPersisted(): PersistedState {
       if (merged.settings.shortcuts["list.prev"] === "k|up") {
         merged.settings.shortcuts["list.prev"] = "k";
       }
+      // v0.14: Superhuman-parity keys (mirrors store/mod.rs get_settings)
+      for (const [key, oldV, newV] of [
+        ["thread.mute", "m", "shift+m"],
+        ["thread.move", "v", "v|l"],
+        ["goto.trash", "g t", "g t|g #"],
+        ["calendar.toggle", "", "0"],
+        ["calendar.open", "g c", "g c|2"],
+        ["calendar.prevDay", "left", "left|-"],
+        ["calendar.nextDay", "right", "right|="],
+      ] as const) {
+        if (merged.settings.shortcuts[key] === oldV) {
+          merged.settings.shortcuts[key] = newV;
+        }
+      }
       return merged;
     }
   } catch {

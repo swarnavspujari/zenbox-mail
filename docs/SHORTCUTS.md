@@ -1,6 +1,8 @@
 # Keyboard Shortcuts
 
-Aligned with **Superhuman v7 (Windows & Linux edition)**. `mod` = `Ctrl` on Windows/Linux, `⌘` on macOS. Everything is remappable in **Settings → Shortcuts** (formats: `e`, `mod+k`, `shift+e`, `g i` chords, `j|down` alternatives) and every action is in the `Ctrl+K` palette with its hint.
+Aligned with **Superhuman (current Windows edition)**. `mod` = `Ctrl` on Windows/Linux, `⌘` on macOS. Everything is remappable in **Settings → Shortcuts** (formats: `e`, `mod+k`, `shift+e`, `g i` chords, `j|down` alternatives) and every action is in the `Ctrl+K` palette with its hint.
+
+**See the full sheet in-app:** `Ctrl+K` → **Keyboard Shortcuts (show all)** opens the Superhuman-style reference in the right-hand panel (where the calendar docks) — every category, live with your remaps; dimmed rows are Superhuman capabilities still on our roadmap (matrix at the bottom of this file). `Esc` closes it.
 
 ## Global
 
@@ -20,7 +22,7 @@ Aligned with **Superhuman v7 (Windows & Linux edition)**. `mod` = `Ctrl` on Wind
 | `G` then `I` | Inbox / Important | `G` then `E` | Done |
 | `G` then `O` | Other | `G` then `H` | Reminders |
 | `G` then `S` | Starred | `G` then `D` | Drafts (resume unsent) |
-| `G` then `T` | Trash | `G` then `C` | Calendar (week view) |
+| `G` then `#` (or `G`,`T`) | Trash | `G` then `C` (or `2`) | Calendar (week view) |
 
 ## Triage
 
@@ -30,12 +32,12 @@ Aligned with **Superhuman v7 (Windows & Linux edition)**. `mod` = `Ctrl` on Wind
 | `Shift+E` | Mark Not Done (back to inbox — in Done/Reminders; **restores** from Trash) |
 | `H` | Remind me / snooze… |
 | `S` | Star / unstar |
-| `#` / `Delete` / `Backspace` | Trash — browsable under `G`,`T`, synced two-way with Gmail |
+| `#` / `Delete` / `Backspace` | Trash — browsable under `G`,`#` (or `G`,`T`), synced two-way with Gmail |
 | `!` | Mark spam |
-| `M` | Mute — archive now and auto-archive future replies |
+| `Shift+M` | Mute — archive now and auto-archive future replies (Superhuman parity; bare `M` is reserved for their Comment key) |
 | `Z` (or `Ctrl+Z`) | **Undo** the last action (done, trash, spam, mute, snooze, star, send — bulk sweeps undo as one) |
 | `U` | Mark read / unread (toggle) |
-| `V` | Move to folder / label… (applies to the whole selection) |
+| `V` or `L` | Move to folder / add or remove label… (applies to the whole selection) |
 | `Ctrl+U` | Unsubscribe (opens the newsletter's List-Unsubscribe link) |
 | `Ctrl+A` | **Select** the cursor row and everything below it (bulk bar appears) |
 | `X` | Select / deselect the cursor row |
@@ -59,8 +61,9 @@ Aligned with **Superhuman v7 (Windows & Linux edition)**. `mod` = `Ctrl` on Wind
 
 | Key | Action |
 |---|---|
-| `←` / `→` | Previous / next day — when the calendar has focus (the week view, or the day panel after opening/clicking it; clicking back into the list releases the keys) |
-| `G` then `C` | Open the week view (`Esc` returns to mail) |
+| `0` | Toggle the day panel beside the inbox (Superhuman "Open Day") |
+| `2` (or `G` then `C`) | Open the week view (`Esc` returns to mail) |
+| `←`/`→` or `-`/`=` | Previous / next day — when the calendar has focus (the week view, or the day panel after opening/clicking it; clicking back into the list releases the keys) |
 
 ## Compose
 
@@ -91,7 +94,155 @@ Recipients: start typing a name or email in **To**/**Cc** and the closest contac
 
 - **Get Me To Zero (bulk archive)…** · **Sync Now** · **Toggle Folder Sidebar** · **Toggle Calendar Panel** · **Switch to <account>** (also Alt+N)
 
-Superhuman keys not yet mapped (their features land in later releases): `G-T` sent view (our `G`,`T` is Trash).
+# Superhuman parity matrix (v0.14)
+
+The complete Superhuman shortcut sheet (transcribed from their current Windows build), item by item. This is also the data behind the in-app panel (`src/lib/shortcuts-catalog.ts`). **✅ ready** = wired (and remappable) · **🔶 partial** = the capability exists via UI or on a different key · **🔜 roadmap** = the underlying feature hasn't landed yet.
+
+## Actions
+
+| Superhuman | Keys | Status | Fission notes |
+|---|---|---|---|
+| Superhuman Command | `Ctrl+K` | ✅ | Fission Command |
+| Search | `/` | ✅ | |
+| Undo | `Z` | ✅ | `Ctrl+Z` too |
+| Ask AI | `?` | ✅ | Ask AI about the open thread |
+
+## Navigation
+
+| Superhuman | Keys | Status | Fission notes |
+|---|---|---|---|
+| Next / Previous Conversation | `J` `K` | ✅ | |
+| Next / Previous Message | `N` `P` | 🔜 | per-message nav inside a thread |
+| Open | `Enter` | ✅ | |
+| Back | `Esc` | ✅ | |
+| Next / Previous Split Inbox | `Tab` / `Shift+Tab` | ✅ | |
+| Open Label Menu | `←` | 🔜 | ←/→ move calendar days when the panel is focused |
+| Page Down / Up | `Space` / `Shift+Space` | ✅ | pages the open email |
+| Jump to Top / Bottom | `Ctrl+↑` / `Ctrl+↓` | 🔜 | |
+| Switch Accounts | `Alt+1-9` | ✅ | slots follow Settings → Account order |
+| Superhuman Focus | `→ ← ↓ ↑` | 🔜 | focus mode |
+
+## Conversations
+
+| Superhuman | Keys | Status | Fission notes |
+|---|---|---|---|
+| Mark Done (Archive) | `E` | ✅ | |
+| Mark not Done | `Shift+E` | ✅ | restores from Trash too |
+| Remind Me (Snooze) | `H` | ✅ | |
+| Star | `S` | ✅ | |
+| Mark Read or Unread | `U` | ✅ | |
+| Summarize | `I` | 🔜 | AI thread summary |
+| Mute | `Shift+M` | ✅ | changed from `M` in v0.14 for parity |
+| Trash | `#` | ✅ | `Delete`/`Backspace` too |
+| Mark as Spam | `!` | ✅ | |
+| Unsubscribe | `Ctrl+U` | ✅ | |
+| Print | `Ctrl+P` | 🔜 | |
+| Select Conversation | `X` | ✅ | |
+| Clear Selection | `Esc` | ✅ | |
+| Select All From Here | `Ctrl+A` | ✅ | |
+| Select All | `Ctrl+Shift+A` | 🔜 | |
+| Share Conversation | `Ctrl+S` | 🔜 | team feature |
+| Comment | `M` | 🔜 | team comments — bare `M` stays reserved |
+| Delete Comment | `Ctrl+Backspace` | 🔜 | |
+
+## Labels
+
+| Superhuman | Keys | Status | Fission notes |
+|---|---|---|---|
+| Move | `V` | ✅ | |
+| Add or Remove Label | `L` | ✅ | opens the Move / Label picker (v0.14) |
+| Remove Label | `Y` | 🔜 | |
+| Remove Label, Next / Previous | `[` / `]` | 🔜 | |
+| Remove All Labels | `Shift+Y` | 🔜 | |
+
+## Messages
+
+| Superhuman | Keys | Status | Fission notes |
+|---|---|---|---|
+| Compose | `C` | ✅ | |
+| Reply All | `Enter` | ✅ | `A` works too |
+| Reply | `R` | ✅ | |
+| Forward | `F` | ✅ | |
+| Open Links & Attachments | `Ctrl+O` | 🔜 | click to open today |
+| Cycle Through Links | `Tab` | 🔜 | Tab previews Instant Replies today |
+| Expand Message | `O` | 🔜 | click a collapsed message today |
+| Expand/Collapse Header | `Shift+H` | 🔜 | |
+| Expand All Messages | `Shift+O` | 🔜 | |
+| Show New Messages | `Shift+N` | 🔜 | |
+| Use Snippet | `Ctrl+;` | ✅ | in compose |
+
+## Compose
+
+| Superhuman | Keys | Status | Fission notes |
+|---|---|---|---|
+| To / Cc / Bcc | `Ctrl+Shift+O/C/B` | ✅ | |
+| From | `Ctrl+Shift+F` | 🔜 | send-as identities |
+| Edit Subject | `Ctrl+Shift+S` | ✅ | |
+| Superhuman AI | `Ctrl+J` | ✅ | Write with AI |
+| Attach | `Ctrl+Shift+U` | 🔶 | via the 📎 button |
+| Discard Draft | `Ctrl+Shift+,` | 🔶 | via the 🗑 button |
+| Instant Intro (to BCC) | `Ctrl+Shift+I` | 🔜 | |
+| Remind me | `Ctrl+Shift+H` | 🔜 | reminder-on-send |
+| Send later | `Ctrl+Shift+L` | ✅ | |
+| Use Snippet Inline | `;` | 🔶 | `Ctrl+;` picker today |
+| Insert Emoji | `:` | 🔜 | |
+| Send | `Ctrl+Enter` | ✅ | with the Undo Send window |
+| Send Instantly | `Ctrl+Shift+Z` | ✅ | flushes the Undo Send window |
+| Send + Mark Done | `Ctrl+Shift+Enter` | ✅ | |
+
+## Pop Out Compose — all 🔜 (our composer docks inline / full-view)
+
+`Shift+C` pop out compose · `Shift+Enter` reply all, pop out · `Shift+R` reply, pop out · `Shift+F` forward, pop out · `Ctrl+Shift+P` pop out/in draft · `Ctrl+/` pop out & search · `Ctrl+D` toggle focus
+
+## Format
+
+| Superhuman | Keys | Status | Fission notes |
+|---|---|---|---|
+| Bold / Italics / Underline | `Ctrl+B/I/U` | ✅ | in compose |
+| Hyperlink | `Ctrl+K` | ✅ | in compose (palette elsewhere) |
+| Color | `Ctrl+O` | 🔶 | via the selection bubble |
+| Strikethrough | `Ctrl+Shift+X` | ✅ | |
+| Numbers / Bullets | `Ctrl+Shift+7/8` | ✅ | |
+| Quote | `Ctrl+Shift+9` | 🔶 | via the bubble (editor: `Ctrl+Shift+B`) |
+| Indent / Outdent List | `Tab` / `Shift+Tab` | ✅ | inside a list |
+| Increase / Decrease Indent | `Ctrl+]` / `Ctrl+[` | 🔜 | |
+
+## Folders
+
+| Superhuman | Keys | Status | Fission notes |
+|---|---|---|---|
+| Go to Inbox / Important | `G`,`I` | ✅ | Important split |
+| Go to Other | `G`,`O` | ✅ | |
+| Go to Starred | `G`,`S` | ✅ | |
+| Go to Drafts | `G`,`D` | ✅ | |
+| Go to Sent | `G`,`T` | 🔜 | our `G`,`T` opens Trash until a Sent view lands |
+| Go to Done | `G`,`E` | ✅ | |
+| Go to Reminders | `G`,`H` | ✅ | |
+| Go to Muted | `G`,`M` | 🔜 | |
+| Go to Snippets | `G`,`;` | 🔜 | snippets live in Settings → Knowledge Base |
+| Go to Spam | `G`,`!` | 🔜 | |
+| Go to Trash | `G`,`#` | ✅ | added in v0.14 |
+| Go to All Mail | `G`,`A` | 🔜 | |
+| Go to Label … | `G`,`L` | 🔜 | labels via the ☰ sidebar today |
+
+## Windows — all 🔜 (no tabbed windows yet)
+
+`Ctrl+T` new tab · `Ctrl+Shift+]`/`[` next/prev tab · `Ctrl+W` close tab · `Ctrl+=`/`-`/`0` font size · `Ctrl+F` find within page · `Alt+/` copy private link
+
+## Calendar
+
+| Superhuman | Keys | Status | Fission notes |
+|---|---|---|---|
+| Open Day | `0` | ✅ | the day panel (v0.14) |
+| Open Week | `2` | ✅ | `G`,`C` too (v0.14) |
+| Previous / Next Day/Week | `-` / `=` | ✅ | while the calendar is focused; `←`/`→` too (v0.14) |
+| Share Availability | `Ctrl+Shift+A` | 🔜 | |
+| Create Event | `B` | 🔜 | calendar is read-only today |
+| Create Empty Event | `Shift+B` | 🔜 | |
+
+## Filters — all 🔜 (list filters)
+
+`Shift+U` unread · `Shift+S` starred · `Shift+I` important · `Shift+R` no reply
 
 ---
 

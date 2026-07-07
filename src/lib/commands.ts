@@ -874,6 +874,14 @@ export function allCommands(): Command[] {
         void s.save({ showShortcutBar: !s.settings.showShortcutBar });
       },
     },
+    {
+      // The full Superhuman-style sheet in the right-hand dock (where the
+      // calendar panel lives). Esc or × closes it.
+      id: "shortcuts.show",
+      title: "Keyboard Shortcuts (show all)",
+      group: "General",
+      run: () => ui().setShortcutsOpen(!ui().shortcutsOpen),
+    },
     // Ctrl+1..9 — Superhuman-style account switching (slots are the order in
     // Settings → Account; reassign by reordering there).
     ...Array.from({ length: 9 }, (_, i) => {
@@ -954,6 +962,7 @@ export function allCommands(): Command[] {
         const u = ui();
         if (u.askAiOpen) return u.setAskAiOpen(false);
         if (u.aiBarOpen) return u.setAiBarOpen(false);
+        if (u.shortcutsOpen) return u.setShortcutsOpen(false);
         if (inList() && mail().selectedIds.size > 0)
           return mail().clearSelection();
         if (u.compose) {

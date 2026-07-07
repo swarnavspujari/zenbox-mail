@@ -233,12 +233,14 @@ pub fn default_settings() -> Settings {
         ("reader.lineUp", "up"),
         ("reader.pageUp", "shift+space"),
         ("thread.unread", "u"),
-        ("thread.move", "v"),
+        // V = Move, L = Add/Remove Label in Superhuman; both open our picker.
+        ("thread.move", "v|l"),
         ("thread.replyAll", "a"),
         ("thread.star", "s"),
         ("thread.trash", "#|delete|backspace"),
         ("thread.spam", "!"),
-        ("thread.mute", "m"),
+        // Shift+M matches Superhuman; bare M is reserved for their Comment key.
+        ("thread.mute", "shift+m"),
         ("thread.notDone", "shift+e"),
         ("thread.unsubscribe", "mod+u"),
         ("undo", "z|mod+z"),
@@ -251,7 +253,8 @@ pub fn default_settings() -> Settings {
         ("goto.done", "g e"),
         ("goto.reminders", "g h"),
         ("goto.starred", "g s"),
-        ("goto.trash", "g t"),
+        // Superhuman's Trash chord is G-#; G-T stays ours until a Sent view lands.
+        ("goto.trash", "g t|g #"),
         ("goto.drafts", "g d"),
         ("compose.ai", "mod+j"),
         ("compose.send", "mod+enter"),
@@ -269,13 +272,16 @@ pub fn default_settings() -> Settings {
         // Accelerate a pending send (skip the Undo Send window).
         ("send.accelerate", "mod+shift+z"),
         ("theme.toggle", ""),
-        ("calendar.toggle", ""),
-        ("calendar.open", "g c"),
-        ("calendar.prevDay", "left"),
-        ("calendar.nextDay", "right"),
+        // Superhuman calendar keys: 0 = day panel, 2 = week view; -/= move
+        // days while the calendar owns focus (←/→ still work).
+        ("calendar.toggle", "0"),
+        ("calendar.open", "g c|2"),
+        ("calendar.prevDay", "left|-"),
+        ("calendar.nextDay", "right|="),
         ("calendar.today", ""),
         ("sidebar.toggle", ""),
         ("shortcutBar.toggle", ""),
+        ("shortcuts.show", ""),
         ("list.selectAll", "mod+a"),
         ("list.toggleSelect", "x"),
         ("thread.cycleSuggestion", "tab"),
@@ -400,6 +406,25 @@ pub fn get_settings(conn: &Connection) -> Settings {
             if let Some(v) = s.shortcuts.get_mut("list.prev") {
                 if v == "k|up" {
                     *v = "k".into();
+                }
+            }
+            // v0.14: Superhuman-parity keys — Shift+M mutes (M is reserved
+            // for their Comment key), L opens the label picker, G-# reaches
+            // Trash, and 0/2/-/= drive the calendar. Saved copies still on
+            // the old defaults upgrade; custom remaps survive.
+            for (key, old, new_v) in [
+                ("thread.mute", "m", "shift+m"),
+                ("thread.move", "v", "v|l"),
+                ("goto.trash", "g t", "g t|g #"),
+                ("calendar.toggle", "", "0"),
+                ("calendar.open", "g c", "g c|2"),
+                ("calendar.prevDay", "left", "left|-"),
+                ("calendar.nextDay", "right", "right|="),
+            ] {
+                if let Some(v) = s.shortcuts.get_mut(key) {
+                    if v == old {
+                        *v = new_v.into();
+                    }
                 }
             }
             for p in defaults.providers {
