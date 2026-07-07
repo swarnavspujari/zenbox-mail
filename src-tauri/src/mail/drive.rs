@@ -240,8 +240,28 @@ pub async fn upload_begin(
         .ok_or("Drive did not return an upload session".to_string())
 }
 
-/// PUT one chunk to the session URI. Ok(None) = 308, keep sending;
-/// Ok(Some(file)) = complete. 404 = session expired (restart).
+/// Outcome of one chunk PUT.
+pub enum ChunkOutcome {
+    /// 308 — keep sending. `next_offset` is the server's high-water mark
+    /// (from the 308's Range header) when it reported one: the server may
+    /// persist FEWER bytes than were sent, and the next Content-Range must
+    /// start from ITS offset, not the local counter.
+    Continue { next_offset: Option<i64> },
+    /// 200/201 — upload complete.
+    Done(DriveFile),
+}
+
+/// Parse a 308's `Range: bytes=0-N` header into the next send offset (N+1).
+fn range_next_offset(resp: &reqwest::Response) -> Option<i64> {
+    let v = resp.headers().get("range")?.to_str().ok()?;
+    let end = v.rsplit('-').next()?.trim();
+    end.parse::<i64>().ok().map(|n| n + 1)
+}
+
+/// PUT one chunk to the session URI. Transient failures (429/5xx/network)
+/// retry with backoff — a resumable session survives them by design, and
+/// failing a multi-hundred-chunk upload over one blip would force a restart
+/// from byte 0. 404 = session expired (restart).
 pub async fn upload_chunk(
     http: &reqwest::Client,
     token: &str,
@@ -249,35 +269,48 @@ pub async fn upload_chunk(
     offset: i64,
     total: i64,
     bytes: Vec<u8>,
-) -> Result<Option<DriveFile>, String> {
+) -> Result<ChunkOutcome, String> {
     let end = offset + bytes.len() as i64 - 1;
-    let resp = http
-        .put(session_uri)
-        .bearer_auth(token)
-        .header("Content-Range", format!("bytes {offset}-{end}/{total}"))
-        .body(bytes)
-        .send()
-        .await
-        .map_err(|_| "Drive upload failed (network)".to_string())?;
-    let status = resp.status().as_u16();
-    match status {
-        308 => Ok(None),
-        200 | 201 => {
-            let v: Value = resp
-                .json()
-                .await
-                .map_err(|_| "Drive returned an unexpected response".to_string())?;
-            Ok(Some(parse_file(&v)))
-        }
-        404 => Err("the Drive upload session expired — try the upload again".into()),
-        _ => {
-            let body = resp.text().await.unwrap_or_default();
-            Err(classify(&format!(
-                "Drive API error ({status}): {}",
-                body.chars().take(500).collect::<String>()
-            )))
+    for attempt in 0..3u32 {
+        let sent = http
+            .put(session_uri)
+            .bearer_auth(token)
+            .header("Content-Range", format!("bytes {offset}-{end}/{total}"))
+            .body(bytes.clone())
+            .send()
+            .await;
+        let resp = match sent {
+            Ok(r) => r,
+            Err(_) => {
+                tokio::time::sleep(std::time::Duration::from_millis(500 * 2u64.pow(attempt))).await;
+                continue;
+            }
+        };
+        let status = resp.status().as_u16();
+        match status {
+            308 => return Ok(ChunkOutcome::Continue { next_offset: range_next_offset(&resp) }),
+            200 | 201 => {
+                let v: Value = resp
+                    .json()
+                    .await
+                    .map_err(|_| "Drive returned an unexpected response".to_string())?;
+                return Ok(ChunkOutcome::Done(parse_file(&v)));
+            }
+            404 => return Err("the Drive upload session expired — try the upload again".into()),
+            429 | 500..=599 => {
+                tokio::time::sleep(std::time::Duration::from_millis(500 * 2u64.pow(attempt))).await;
+                continue;
+            }
+            _ => {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(classify(&format!(
+                    "Drive API error ({status}): {}",
+                    body.chars().take(500).collect::<String>()
+                )));
+            }
         }
     }
+    Err("Drive upload kept failing — check your connection and try again".into())
 }
 
 /// Abandon a resumable session (best-effort; Google also expires them).

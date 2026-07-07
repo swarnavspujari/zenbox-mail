@@ -125,7 +125,13 @@ export default function App() {
       getBindings: commandBindings,
       isOverlayOpen: () => {
         const u = useUi.getState();
-        return u.paletteOpen || u.picker !== "none" || u.celebration !== null;
+        return (
+          u.paletteOpen ||
+          u.picker !== "none" ||
+          u.celebration !== null ||
+          u.drivePrompt !== null ||
+          u.sharePrompt !== null
+        );
       },
     });
   }, []);

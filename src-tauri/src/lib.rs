@@ -159,10 +159,17 @@ async fn start_oauth(
     secrets::set(&secrets::gmail_refresh_entry(&email), &outcome.refresh_token)?;
 
     // Persist exactly what was granted — feature gating reads this, and its
-    // absence marks a pre-v0.12 grant that needs one reconnect.
-    if let Some(scope) = &outcome.granted_scope {
+    // absence marks a pre-v0.15 grant that needs one reconnect. If Google
+    // (abnormally) omitted the scope field, assume the full requested block
+    // rather than misclassifying a fresh connect as a legacy grant — a wrong
+    // optimistic grant just surfaces as a classified 403 with a Reconnect CTA.
+    {
+        let scope = outcome
+            .granted_scope
+            .clone()
+            .unwrap_or_else(|| mail::oauth::requested_scope().to_string());
         let conn = state.db.lock().unwrap();
-        let _ = store::set_json(&conn, &format!("granted_scopes:{email}"), scope);
+        let _ = store::set_json(&conn, &format!("granted_scopes:{email}"), &scope);
         // A fresh grant never needs the "reconnect for new features" notice.
         let _ = store::set_json(&conn, &format!("scope_notice_shown:{email}"), &true);
     }
@@ -292,7 +299,13 @@ async fn disconnect_account(
         store::clear_account_mail(&conn, &email)?;
         // Drop the recorded grant + synced Google data: the account is gone
         // (or about to reconnect fresh), so stale state must not linger.
-        for key in ["granted_scopes", "scope_notice_shown", "people_synced", "sendas"] {
+        for key in [
+            "granted_scopes",
+            "scope_notice_shown",
+            "people_synced",
+            "sendas",
+            "drive_folder",
+        ] {
             conn.execute("DELETE FROM kv WHERE key = ?1", [format!("{key}:{email}")]).ok();
         }
         conn.execute("DELETE FROM people_contacts WHERE account_id = ?1", [email.as_str()]).ok();
@@ -1298,20 +1311,27 @@ async fn drive_upload_chunk(
     let result =
         mail::drive::upload_chunk(&state.http, &token, &session_uri, sent, total, bytes).await;
     match result {
-        Ok(Some(file)) => {
+        Ok(mail::drive::ChunkOutcome::Done(file)) => {
             state.drive_uploads.lock().unwrap().remove(&upload_id);
-            Ok(DriveChunkResult { done: true, file: Some(file) })
+            Ok(DriveChunkResult { done: true, file: Some(file), next_offset: total })
         }
-        Ok(None) => {
+        Ok(mail::drive::ChunkOutcome::Continue { next_offset }) => {
+            // The server's Range high-water mark is authoritative — it may
+            // have persisted fewer bytes than we sent. The webview slices the
+            // next chunk from next_offset, so a short write self-heals.
+            let next = next_offset.unwrap_or(sent + len).clamp(0, total);
             let mut uploads = state.drive_uploads.lock().unwrap();
             if let Some(u) = uploads.get_mut(&upload_id) {
-                u.sent += len;
+                u.sent = next;
             }
-            Ok(DriveChunkResult { done: false, file: None })
+            Ok(DriveChunkResult { done: false, file: None, next_offset: next })
         }
         Err(e) => {
-            // dead session URIs can't be resumed — drop the entry
+            // Unrecoverable (transient errors already retried inside
+            // upload_chunk): drop the entry and abandon the session
+            // server-side so it doesn't linger for a week.
             state.drive_uploads.lock().unwrap().remove(&upload_id);
+            mail::drive::upload_cancel(&state.http, &session_uri).await;
             Err(e)
         }
     }
@@ -2596,13 +2616,28 @@ pub fn run() {
                                 .collect()
                         };
                         for email in &emails {
-                            let stale = {
+                            let (stale, has_contacts_scope) = {
                                 let conn = state.db.lock().unwrap();
-                                store::get_json::<i64>(&conn, &format!("people_synced:{email}"))
-                                    .map(|at| now_ms() - at > DAY_MS)
-                                    .unwrap_or(true)
+                                let stale = store::get_json::<i64>(
+                                    &conn,
+                                    &format!("people_synced:{email}"),
+                                )
+                                .map(|at| now_ms() - at > DAY_MS)
+                                .unwrap_or(true);
+                                // No contacts grant → a sync can never succeed;
+                                // don't re-spawn a doomed call every 5 minutes.
+                                let has_scope = store::get_json::<String>(
+                                    &conn,
+                                    &format!("granted_scopes:{email}"),
+                                )
+                                .map(|g| {
+                                    scope_granted(&g, "https://www.googleapis.com/auth/contacts.readonly")
+                                        || scope_granted(&g, "https://www.googleapis.com/auth/contacts.other.readonly")
+                                })
+                                .unwrap_or(false);
+                                (stale, has_scope)
                             };
-                            if stale {
+                            if stale && has_contacts_scope {
                                 spawn_people_sync(handle.clone(), email.clone());
                             }
                         }

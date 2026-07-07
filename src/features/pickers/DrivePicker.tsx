@@ -62,6 +62,18 @@ function insertChip(file: DriveFile) {
 
 async function attachAsCopy(file: DriveFile) {
   const ui = useUi.getState();
+  // Same aggregate ceiling addFiles enforces — one 20 MB copy on top of an
+  // 18 MB draft must divert to a link, not fail at send with a raw size error.
+  const existing = (ui.compose?.attachments ?? []).reduce(
+    (n, a) => n + a.dataBase64.length * 0.75,
+    0
+  );
+  if (existing + (file.size ?? 0) > INLINE_LIMIT) {
+    ui.showToast(
+      "That would push attachments over the 25 MB limit — insert the link instead"
+    );
+    return;
+  }
   try {
     const att = await backend.driveDownloadAttach(file.id);
     useUi.setState((s) => ({

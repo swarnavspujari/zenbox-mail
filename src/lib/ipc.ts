@@ -322,9 +322,12 @@ class TauriBackend implements Backend {
       size: file.size,
     });
     // 4 MiB chunks (Google requires a multiple of 256 KiB) as raw invoke
-    // bodies — no base64 JSON, bounded memory, exact progress.
+    // bodies — no base64 JSON, bounded memory, exact progress. The next
+    // slice starts at the SERVER's acknowledged offset (nextOffset): Drive
+    // may persist less than was sent, and resyncing makes that self-heal.
     const CHUNK = 4 * 1024 * 1024;
     let offset = 0;
+    let stalls = 0;
     try {
       for (;;) {
         const end = Math.min(offset + CHUNK, file.size);
@@ -332,15 +335,17 @@ class TauriBackend implements Backend {
         const res = await invoke<DriveChunkResult>("drive_upload_chunk", bytes, {
           headers: { "upload-id": String(uploadId) },
         });
-        offset = end;
-        onProgress(offset, file.size);
         if (res.done) {
+          onProgress(file.size, file.size);
           if (!res.file) throw new Error("upload finished without file metadata");
           return res.file;
         }
-        if (offset >= file.size) {
-          throw new Error("Drive did not acknowledge the final chunk");
-        }
+        // no forward progress twice in a row = a wedged session; bail rather
+        // than loop forever re-sending the same range
+        stalls = res.nextOffset > offset ? 0 : stalls + 1;
+        if (stalls >= 2) throw new Error("Drive stopped accepting upload data");
+        offset = res.nextOffset;
+        onProgress(offset, file.size);
       }
     } catch (e) {
       void invoke("drive_upload_cancel", { uploadId }).catch(() => {});

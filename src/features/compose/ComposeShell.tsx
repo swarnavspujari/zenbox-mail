@@ -30,9 +30,28 @@ const modalBtn =
 const modalGhost =
   "rounded-md border border-line-strong px-3 py-1.5 text-[12.5px] text-ink-2 hover:bg-hover";
 
+/** While a compose modal is up, Escape must cancel THE MODAL — not bubble to
+ *  the global engine's `back` and tear down the whole composer (abandoning
+ *  the send and leaking the share resolver). Capture-phase, so it wins over
+ *  the window-level keyboard engine. */
+function useEscapeToCancel(cancel: () => void) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        cancel();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [cancel]);
+}
+
 /** "Too big to attach — upload to Google Drive and insert a link?" */
 function DriveUploadPrompt({ names }: { names: string[] }) {
   const [remember, setRemember] = useState(false);
+  useEscapeToCancel(cancelDriveUpload);
   return (
     <div
       className="zb-fade-in fixed inset-0 z-40 flex items-center justify-center bg-black/50"
@@ -82,6 +101,7 @@ function DriveUploadPrompt({ names }: { names: string[] }) {
 /** Share-on-send: who can open the linked Drive files? */
 function SharePrompt({ count }: { count: number }) {
   const remembered = useSettings((s) => s.settings.driveShareMode);
+  useEscapeToCancel(() => chooseShareMode("cancel"));
   const options = [
     {
       mode: "recipients" as const,
@@ -159,10 +179,15 @@ export function ComposeShell({ variant }: { variant: "modal" | "dock" }) {
   useEffect(() => {
     if (!editor) return;
     const handler = (e: Event) => {
-      const html = (e as CustomEvent).detail?.html as string | undefined;
-      if (!html) return;
+      const detail = (e as CustomEvent).detail as
+        | { html?: string; focus?: boolean }
+        | undefined;
+      if (!detail?.html) return;
       // Trailing space exits the link mark so typing after a chip is plain.
-      editor.chain().focus().insertContent(`${html} `).run();
+      // focus:false (async inserts like finished uploads) leaves the caret
+      // wherever the user is typing instead of yanking it into the body.
+      const chain = detail.focus === false ? editor.chain() : editor.chain().focus();
+      chain.insertContent(`${detail.html} `).run();
     };
     window.addEventListener("fission:insert-html", handler);
     return () => window.removeEventListener("fission:insert-html", handler);

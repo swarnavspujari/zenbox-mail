@@ -1275,13 +1275,17 @@ pub fn replace_people(
     rows: &[(String, String, Option<String>)], // (email, name, photo_url)
     now_ms: i64,
 ) -> Result<(), String> {
-    conn.execute(
+    // One transaction: thousands of per-row autocommit INSERTs would each
+    // fsync while the global DB mutex is held (seconds of frozen IPC), and a
+    // mid-loop failure must not leave the source half-replaced.
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute(
         "DELETE FROM people_contacts WHERE account_id = ?1 AND source = ?2",
         params![account_id, source],
     )
     .map_err(|e| e.to_string())?;
     for (email, name, photo) in rows {
-        conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO people_contacts
                 (account_id, source, email, display_name, photo_url, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1289,7 +1293,7 @@ pub fn replace_people(
         )
         .map_err(|e| e.to_string())?;
     }
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
 /// Ranked recipient suggestions for a typed query, merged from two sources:

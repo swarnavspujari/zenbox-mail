@@ -294,11 +294,14 @@ pub struct DriveSearchPage {
 }
 
 /// Outcome of one uploaded chunk: not done yet, or the finished file.
+/// `next_offset` is the server-acknowledged high-water mark — the webview
+/// slices the next chunk from here (Drive may persist less than was sent).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct DriveChunkResult {
     pub done: bool,
     pub file: Option<DriveFile>,
+    pub next_offset: i64,
 }
 
 /// A file attached to an outgoing message (bytes travel base64 over IPC and

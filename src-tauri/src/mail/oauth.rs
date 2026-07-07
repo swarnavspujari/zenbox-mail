@@ -20,6 +20,12 @@ const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 // feature gates on the persisted granted_scopes (see get_capabilities).
 const SCOPE: &str = "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.settings.basic openid email profile https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly https://www.googleapis.com/auth/directory.readonly";
 
+/// The full requested block — the fallback "granted" value when Google's
+/// token response omits its `scope` field.
+pub fn requested_scope() -> &'static str {
+    SCOPE
+}
+
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,

@@ -986,6 +986,7 @@ function AppearanceTab() {
   const notifications = useSettings((s) => s.settings.notifications);
   const onboarded = useSettings((s) => s.settings.onboarded);
   const undoSendSeconds = useSettings((s) => s.settings.undoSendSeconds);
+  const driveAutoUpload = useSettings((s) => s.settings.driveAutoUpload);
   return (
     <>
       <Section
@@ -1046,6 +1047,24 @@ function AppearanceTab() {
           <option value={0}>Off — send immediately</option>
           <option value={10}>10 seconds</option>
           <option value={30}>30 seconds</option>
+        </select>
+      </Section>
+
+      <Section
+        title="Oversized attachments"
+        hint="Files over the 25 MB email limit upload to Google Drive and send as a link, like Gmail. (This is also where 'always upload without asking' can be turned back off.)"
+      >
+        <select
+          value={driveAutoUpload}
+          onChange={(e) =>
+            void useSettings
+              .getState()
+              .save({ driveAutoUpload: e.target.value as "ask" | "always" })
+          }
+          className="cursor-pointer rounded-md border border-line-strong bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-accent"
+        >
+          <option value="ask">Ask before uploading to Drive</option>
+          <option value="always">Always upload to Drive without asking</option>
         </select>
       </Section>
 

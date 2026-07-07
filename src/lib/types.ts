@@ -209,10 +209,13 @@ export interface DriveFile {
   owner: string | null;
 }
 
-/** Outcome of one uploaded chunk: not done yet, or the finished file. */
+/** Outcome of one uploaded chunk: not done yet, or the finished file.
+ *  nextOffset is the server-acknowledged high-water mark — slice the next
+ *  chunk from here (Drive may persist less than was sent). */
 export interface DriveChunkResult {
   done: boolean;
   file: DriveFile | null;
+  nextOffset: number;
 }
 
 /** How linked Drive files get shared when a message sends. */

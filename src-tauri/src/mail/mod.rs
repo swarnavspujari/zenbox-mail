@@ -22,6 +22,13 @@ pub fn classify_google_error(e: &str, api_name: &str, feature: &str) -> String {
     let scope_missing = e.contains("ACCESS_TOKEN_SCOPE_INSUFFICIENT")
         || e.contains("insufficientPermissions")
         || e.contains("insufficient");
+    let storage_full =
+        e.contains("storageQuotaExceeded") || e.contains("teamDriveFileLimitExceeded");
+    if storage_full {
+        return format!(
+            "{feature}: your Google storage is full — free up space at one.google.com/storage and try again."
+        );
+    }
     if api_disabled {
         format!(
             "The {api_name} isn't enabled for this app's Google Cloud project. \

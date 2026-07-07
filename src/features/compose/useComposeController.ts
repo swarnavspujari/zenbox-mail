@@ -16,8 +16,9 @@ import {
   driveChipsInHtml,
   outgoingFromCompose,
   useUi,
+  type ComposeState,
 } from "@/stores/ui";
-import type { DriveShareMode, MailAttachment } from "@/lib/types";
+import type { DriveShareMode, MailAttachment, OutgoingMail } from "@/lib/types";
 
 const MAX_ATTACH_TOTAL = 25_000_000; // Gmail's raw-message ceiling
 
@@ -57,6 +58,10 @@ let driveUploadSeq = 1;
  *  insert the link chip at the caret and record it for share-on-send. */
 function startDriveUpload(file: File) {
   const id = driveUploadSeq++;
+  // Bind the upload to THIS compose session: if the composer closes (or a
+  // different one opens) before the upload finishes, the chip must not land
+  // in an unrelated email — the file just stays in the Drive folder.
+  const originSeq = useUi.getState().composeSeq;
   useUi.setState((s) => ({
     driveUploads: [
       ...s.driveUploads,
@@ -75,18 +80,20 @@ function startDriveUpload(file: File) {
       useUi.setState((s) => ({
         driveUploads: s.driveUploads.filter((u) => u.id !== id),
       }));
-      // The composer may have closed mid-upload — then there's nowhere to
-      // insert and the file just sits in the Drive folder (accepted orphan).
-      const c = useUi.getState().compose;
-      if (!c) return;
+      const ui = useUi.getState();
+      if (!ui.compose || ui.composeSeq !== originSeq) return;
       const ref = { fileId: f.id, name: f.name, url: f.webViewLink, size: f.size };
       useUi.setState((s) => ({
         compose: s.compose
           ? { ...s.compose, driveLinks: [...s.compose.driveLinks, ref] }
           : null,
       }));
+      // focus:false — this fires at an arbitrary time; don't yank the caret
+      // out of whatever field the user is typing in.
       window.dispatchEvent(
-        new CustomEvent("fission:insert-html", { detail: { html: driveChipHtml(ref) } })
+        new CustomEvent("fission:insert-html", {
+          detail: { html: driveChipHtml(ref), focus: false },
+        })
       );
     })
     .catch((e) => {
@@ -124,6 +131,58 @@ function promptShareMode(count: number): Promise<DriveShareMode | "cancel"> {
     shareResolver = resolve;
     useUi.setState({ sharePrompt: { count } });
   });
+}
+
+/** The bare addr-spec of a recipient token — Drive's permissions API takes
+ *  addresses only, but recipients arrive as "Name <email>" from autocomplete. */
+function addrSpec(token: string): string {
+  const m = token.match(/<([^>]+)>/);
+  return (m ? m[1] : token).trim();
+}
+
+/** Share-on-send, shared by Send and Send Later: chips still present in the
+ *  body (the user may have deleted some) get a share dialog before the mail
+ *  moves. Per-file failures warn but never block the send — Gmail behaves
+ *  the same way. Returns false when the user cancels (= cancel the send). */
+export async function shareDriveLinks(
+  c: ComposeState,
+  outgoing: OutgoingMail
+): Promise<boolean> {
+  const chipsInBody = driveChipsInHtml(outgoing.bodyHtml ?? "");
+  const toShare = c.driveLinks.filter((l) => chipsInBody.has(l.fileId));
+  if (toShare.length === 0) return true;
+  const mode = await promptShareMode(toShare.length);
+  if (mode === "cancel") return false;
+  if (mode !== useSettings.getState().settings.driveShareMode) {
+    void useSettings.getState().save({ driveShareMode: mode });
+  }
+  if (mode !== "none") {
+    const recipients = [...outgoing.to, ...outgoing.cc, ...outgoing.bcc]
+      .map(addrSpec)
+      .filter((a) => a.includes("@"));
+    const failed: string[] = [];
+    for (const link of toShare) {
+      try {
+        failed.push(...(await backend.driveShare(link.fileId, mode, recipients)));
+      } catch (e) {
+        useUi.getState().showToast(`Couldn't share "${link.name}": ${String(e)}`);
+      }
+    }
+    if (failed.length > 0) {
+      useUi.getState().showToast(`Couldn't share with: ${[...new Set(failed)].join(", ")}`);
+    }
+  }
+  return true;
+}
+
+/** True when nothing Drive-related blocks a send right now (an upload mid-
+ *  flight or an unanswered oversized prompt). Shared with Send Later. */
+export function driveSendBlocker(): string | null {
+  const ui = useUi.getState();
+  if (ui.driveUploads.length > 0)
+    return "A Drive upload is still in progress — it becomes a link when it finishes.";
+  if (ui.drivePrompt) return "Decide what to do with the oversized attachments first.";
+  return null;
 }
 
 export function useComposeController() {
@@ -175,46 +234,18 @@ export function useComposeController() {
       // else the fuse the message waits out before it actually sends.
       const undoMs =
         Math.max(0, useSettings.getState().settings.undoSendSeconds ?? 10) * 1000;
-      if (useUi.getState().driveUploads.length > 0) {
-        setError("A Drive upload is still in progress — it becomes a link when it finishes.");
+      const blocker = driveSendBlocker();
+      if (blocker) {
+        setError(blocker);
         return;
       }
       setSending(true);
       setError(null);
       try {
         const outgoing = outgoingFromCompose(c);
-
-        // Share-on-send: chips still present in the body (the user may have
-        // deleted some) get read access for the recipients before the mail
-        // moves. Per-file failures warn but never block the send — Gmail
-        // behaves the same way.
-        const chipsInBody = driveChipsInHtml(outgoing.bodyHtml ?? "");
-        const toShare = c.driveLinks.filter((l) => chipsInBody.has(l.fileId));
-        if (toShare.length > 0) {
-          const mode = await promptShareMode(toShare.length);
-          if (mode === "cancel") {
-            setSending(false);
-            return;
-          }
-          if (mode !== useSettings.getState().settings.driveShareMode) {
-            void useSettings.getState().save({ driveShareMode: mode });
-          }
-          if (mode !== "none") {
-            const recipients = [...outgoing.to, ...outgoing.cc, ...outgoing.bcc];
-            const failed: string[] = [];
-            for (const link of toShare) {
-              try {
-                failed.push(...(await backend.driveShare(link.fileId, mode, recipients)));
-              } catch (e) {
-                useUi.getState().showToast(`Couldn't share "${link.name}": ${String(e)}`);
-              }
-            }
-            if (failed.length > 0) {
-              useUi
-                .getState()
-                .showToast(`Couldn't share with: ${[...new Set(failed)].join(", ")}`);
-            }
-          }
+        if (!(await shareDriveLinks(c, outgoing))) {
+          setSending(false);
+          return; // user cancelled the share dialog = cancelled the send
         }
 
         // "Send & mark done": archive the thread + register its own triage undo.

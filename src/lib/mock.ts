@@ -573,10 +573,14 @@ export class MockBackend implements Backend {
         "that file is over the 25 MB attachment limit — insert the link instead"
       );
     const content = `Demo Drive file: ${file.name}\n(real bytes come from Google Drive in the desktop app.)`;
+    // btoa alone throws on non-Latin1 (fixture names carry em dashes)
+    const utf8 = new TextEncoder().encode(content);
+    let bin = "";
+    for (const b of utf8) bin += String.fromCharCode(b);
     return {
       filename: file.name,
       mimeType: "text/plain",
-      dataBase64: btoa(content),
+      dataBase64: btoa(bin),
     };
   }
 

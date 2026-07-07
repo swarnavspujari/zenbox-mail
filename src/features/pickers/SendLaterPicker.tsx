@@ -1,5 +1,9 @@
 import { backend } from "@/lib/ipc";
 import { pushUndo } from "@/lib/undo";
+import {
+  driveSendBlocker,
+  shareDriveLinks,
+} from "@/features/compose/useComposeController";
 import { outgoingFromCompose, useUi } from "@/stores/ui";
 import { PickerShell, type PickerItem } from "./PickerShell";
 
@@ -21,6 +25,15 @@ export function SendLaterPicker() {
       useUi.getState().showToast("Add a recipient before scheduling");
       return;
     }
+    // Scheduling IS a send path: the same Drive gates apply — no scheduling
+    // while an upload is mid-flight, and linked files get their share dialog
+    // now (the message may leave while the app is unattended).
+    const blocker = driveSendBlocker();
+    if (blocker) {
+      useUi.getState().showToast(blocker);
+      return;
+    }
+    if (!(await shareDriveLinks(c, mail))) return; // user cancelled
     const outboxId = await backend.queueMail(mail, Math.max(0, sendAtMs - Date.now()));
     if (c.draftId !== null) void backend.deleteDraft(c.draftId).catch(() => {});
     const saved = { ...c, draftId: null };

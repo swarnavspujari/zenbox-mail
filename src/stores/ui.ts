@@ -257,6 +257,10 @@ interface UiState {
   /** Share-on-send dialog (linked-file count; resolver waits in
    *  useComposeController). */
   sharePrompt: { count: number } | null;
+  /** Monotonic id of the CURRENT compose session — bumps on every
+   *  startCompose. Async work (Drive uploads) captures it and checks it on
+   *  completion, so a result from one compose never lands in another. */
+  composeSeq: number;
 
   setScreen: (s: Screen) => void;
   setFocusRegion: (r: FocusRegion) => void;
@@ -319,6 +323,7 @@ export const useUi = create<UiState>((set, get) => ({
   driveUploads: [],
   drivePrompt: null,
   sharePrompt: null,
+  composeSeq: 0,
 
   setScreen: (s) =>
     set({
@@ -333,7 +338,13 @@ export const useUi = create<UiState>((set, get) => ({
   openPicker: (p) => set({ picker: p }),
   closePicker: () => set({ picker: "none" }),
   startCompose: (c) =>
-    set({ compose: c, screen: "mail", aiBarOpen: false, askAiOpen: false }),
+    set((s) => ({
+      compose: c,
+      composeSeq: s.composeSeq + 1,
+      screen: "mail",
+      aiBarOpen: false,
+      askAiOpen: false,
+    })),
   closeCompose: () =>
     set({
       compose: null,
