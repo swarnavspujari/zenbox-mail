@@ -157,6 +157,21 @@ pub fn open(path: &std::path::Path) -> Result<Connection, String> {
         backfill_contacts(&conn)?;
         let _ = set_json(&conn, "contacts_built_v1", &true);
     }
+    // v0.15: Google People API contacts (saved / other / directory), synced
+    // per account+source and merged into recipient autocomplete alongside the
+    // mail-derived index above. Replace-on-sync, so no freq/recency columns.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS people_contacts (
+            account_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            email TEXT NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            photo_url TEXT,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (account_id, source, email)
+        );",
+    )
+    .map_err(|e| e.to_string())?;
     Ok(conn)
 }
 
@@ -1250,9 +1265,39 @@ fn backfill_contacts(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-/// Ranked recipient suggestions for a typed query: prefix matches on name or
-/// email first, then by how often the contact appears and how recently. The
-/// account's own address is excluded (you don't autocomplete yourself).
+/// Replace one account+source slice of the People-API contacts (a sync is a
+/// full listing, so replace — never merge — but only for sources that
+/// actually fetched, so a failed source keeps its previous rows).
+pub fn replace_people(
+    conn: &Connection,
+    account_id: &str,
+    source: &str,
+    rows: &[(String, String, Option<String>)], // (email, name, photo_url)
+    now_ms: i64,
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM people_contacts WHERE account_id = ?1 AND source = ?2",
+        params![account_id, source],
+    )
+    .map_err(|e| e.to_string())?;
+    for (email, name, photo) in rows {
+        conn.execute(
+            "INSERT OR REPLACE INTO people_contacts
+                (account_id, source, email, display_name, photo_url, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![account_id, source, email, name, photo, now_ms],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Ranked recipient suggestions for a typed query, merged from two sources:
+/// the mail-derived index (freq/recency — the strongest signal: people you
+/// actually correspond with) and the People-API tables (saved contacts >
+/// other contacts > directory). Prefix matches always beat substring
+/// matches; within each band, history beats address book. Dedup by email
+/// (history wins). The account's own address is excluded.
 pub fn search_contacts(
     conn: &Connection,
     account_id: &str,
@@ -1266,24 +1311,63 @@ pub fn search_contacts(
     let esc = q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
     let sub = format!("%{esc}%");
     let pre = format!("{esc}%");
-    let Ok(mut stmt) = conn.prepare(
-        "SELECT email, name FROM contacts
-         WHERE account_id = ?1 AND email <> ?2
-           AND (lower(name) LIKE ?3 ESCAPE '\\' OR email LIKE ?3 ESCAPE '\\')
-         ORDER BY
-           CASE WHEN lower(name) LIKE ?4 ESCAPE '\\' OR email LIKE ?4 ESCAPE '\\'
-                THEN 0 ELSE 1 END,
-           freq DESC, last_seen DESC
-         LIMIT ?5",
-    ) else {
-        return vec![];
-    };
-    stmt.query_map(
-        params![account_id, account_id.to_lowercase(), sub, pre, limit as i64],
-        |r| Ok(Contact { email: r.get(0)?, name: r.get(1)? }),
-    )
-    .map(|rows| rows.filter_map(|r| r.ok()).collect())
-    .unwrap_or_default()
+
+    let history: Vec<Contact> = conn
+        .prepare(
+            "SELECT email, name FROM contacts
+             WHERE account_id = ?1 AND email <> ?2
+               AND (lower(name) LIKE ?3 ESCAPE '\\' OR email LIKE ?3 ESCAPE '\\')
+             ORDER BY
+               CASE WHEN lower(name) LIKE ?4 ESCAPE '\\' OR email LIKE ?4 ESCAPE '\\'
+                    THEN 0 ELSE 1 END,
+               freq DESC, last_seen DESC
+             LIMIT ?5",
+        )
+        .and_then(|mut st| {
+            st.query_map(
+                params![account_id, account_id.to_lowercase(), sub, pre, limit as i64],
+                |r| Ok(Contact { email: r.get(0)?, name: r.get(1)? }),
+            )
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    let people: Vec<Contact> = conn
+        .prepare(
+            "SELECT email, display_name FROM people_contacts
+             WHERE account_id = ?1 AND email <> ?2
+               AND (lower(display_name) LIKE ?3 ESCAPE '\\' OR email LIKE ?3 ESCAPE '\\')
+             ORDER BY
+               CASE WHEN lower(display_name) LIKE ?4 ESCAPE '\\' OR email LIKE ?4 ESCAPE '\\'
+                    THEN 0 ELSE 1 END,
+               CASE source WHEN 'contact' THEN 0 WHEN 'other' THEN 1 ELSE 2 END,
+               display_name
+             LIMIT ?5",
+        )
+        .and_then(|mut st| {
+            st.query_map(
+                params![account_id, account_id.to_lowercase(), sub, pre, (limit * 2) as i64],
+                |r| Ok(Contact { email: r.get(0)?, name: r.get(1)? }),
+            )
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    let is_prefix =
+        |c: &Contact| c.name.to_lowercase().starts_with(&q) || c.email.starts_with(&q);
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<Contact> = vec![];
+    let (h_pre, h_sub): (Vec<_>, Vec<_>) = history.into_iter().partition(&is_prefix);
+    let (p_pre, p_sub): (Vec<_>, Vec<_>) = people.into_iter().partition(&is_prefix);
+    for c in h_pre.into_iter().chain(p_pre).chain(h_sub).chain(p_sub) {
+        if seen.insert(c.email.clone()) {
+            out.push(c);
+            if out.len() >= limit {
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// Locally-trashed thread ids for one account (sync diffs these against the

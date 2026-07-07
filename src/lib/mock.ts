@@ -37,6 +37,18 @@ import {
 
 const LS_KEY = "fission-mock-state-v1";
 
+/** Fixture "Google contacts" — people NOT in the demo mail corpus, so the
+ *  browser demo shows address-book-sourced autocomplete (mirrors the desktop
+ *  people_contacts table synced from the People API). */
+const MOCK_GOOGLE_CONTACTS: { name: string; email: string }[] = [
+  { name: "Nadia Osei", email: "nadia@atlascapital.vc" },
+  { name: "Peter Lindqvist", email: "peter@nordicseed.fi" },
+  { name: "Grace Whitmore", email: "grace.whitmore@summitlp.com" },
+  { name: "Tomás Reyes", email: "tomas@andesventures.cl" },
+  { name: "Sofia Marchetti", email: "sofia.marchetti@milanofund.it" },
+  { name: "Ken Nakamura", email: "ken@sakurabridge.jp" },
+];
+
 interface PersistedState {
   threadPatches: Record<
     string,
@@ -887,7 +899,34 @@ export class MockBackend implements Backend {
       const bp = b.name.toLowerCase().startsWith(q) || b.email.startsWith(q) ? 0 : 1;
       return ap - bp || b.freq - a.freq;
     });
-    return hits.slice(0, 8).map(({ name, email }) => ({ name, email }));
+    // Merge the fixture Google address book the way the Rust core merges the
+    // people_contacts table: prefix matches first, history beats address
+    // book within each band, dedup by email.
+    const isPrefix = (c: { name: string; email: string }) =>
+      c.name.toLowerCase().startsWith(q) || c.email.startsWith(q);
+    const people = MOCK_GOOGLE_CONTACTS.filter(
+      (c) => c.name.toLowerCase().includes(q) || c.email.includes(q)
+    );
+    const merged = [
+      ...hits.filter(isPrefix),
+      ...people.filter(isPrefix),
+      ...hits.filter((c) => !isPrefix(c)),
+      ...people.filter((c) => !isPrefix(c)),
+    ];
+    const seen = new Set<string>();
+    const out: { name: string; email: string }[] = [];
+    for (const { name, email } of merged) {
+      if (seen.has(email) || email === me) continue;
+      seen.add(email);
+      out.push({ name, email });
+      if (out.length >= 8) break;
+    }
+    return out;
+  }
+
+  /** Demo mode syncs no real Google contacts — report the fixture count. */
+  async refreshContacts(): Promise<number> {
+    return MOCK_GOOGLE_CONTACTS.length;
   }
 
   /** Tiny stand-in for Harper: a fixed misspelling list so the demo shows

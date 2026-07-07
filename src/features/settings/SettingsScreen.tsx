@@ -242,6 +242,22 @@ function AccountTab() {
                       Switch
                     </button>
                   )}
+                  {a.provider === "gmail" && capabilities[a.email]?.contacts && active && (
+                    <button
+                      className={btnGhost}
+                      title="Re-sync Google Contacts for recipient autocomplete (also refreshes daily)"
+                      onClick={async () => {
+                        try {
+                          const n = await backend.refreshContacts();
+                          useUi.getState().showToast(`Contacts refreshed — ${n} synced`);
+                        } catch (e) {
+                          useUi.getState().showToast(String(e));
+                        }
+                      }}
+                    >
+                      Refresh contacts
+                    </button>
+                  )}
                   {a.provider === "gmail" && (
                     <button
                       className={btnGhost}

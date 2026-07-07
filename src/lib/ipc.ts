@@ -150,8 +150,12 @@ export interface Backend {
   /** Offline Harper spell/grammar check of compose text. */
   lintText(text: string): Promise<LintHit[]>;
 
-  /** Ranked recipient suggestions for a typed query (from synced mail). */
+  /** Ranked recipient suggestions for a typed query: mail-derived history
+   *  merged with the account's Google contacts. */
   searchContacts(query: string): Promise<Contact[]>;
+  /** Re-sync Google contacts for the active account; resolves to the synced
+   *  row count. */
+  refreshContacts(): Promise<number>;
 
   getSettings(): Promise<Settings>;
   saveSettings(settings: Settings): Promise<void>;
@@ -387,6 +391,9 @@ class TauriBackend implements Backend {
   }
   searchContacts(query: string) {
     return invoke<Contact[]>("search_contacts", { query });
+  }
+  refreshContacts() {
+    return invoke<number>("refresh_contacts");
   }
   getSettings() {
     return invoke<Settings>("get_settings");

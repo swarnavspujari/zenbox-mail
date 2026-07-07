@@ -207,6 +207,9 @@ async fn start_oauth(
             ),
         );
     }
+    // Fresh grant in hand: pull Google contacts now (no-ops gracefully if the
+    // contacts scopes were unchecked).
+    spawn_people_sync(app.clone(), accounts.active.clone());
     sync_in_background(app);
     Ok(accounts)
 }
@@ -286,11 +289,12 @@ async fn disconnect_account(
     let accounts = {
         let conn = state.db.lock().unwrap();
         store::clear_account_mail(&conn, &email)?;
-        // Drop the recorded grant: the account is gone (or about to reconnect
-        // with a fresh consent), so stale capabilities must not linger.
-        for key in ["granted_scopes", "scope_notice_shown"] {
+        // Drop the recorded grant + synced Google data: the account is gone
+        // (or about to reconnect fresh), so stale state must not linger.
+        for key in ["granted_scopes", "scope_notice_shown", "people_synced"] {
             conn.execute("DELETE FROM kv WHERE key = ?1", [format!("{key}:{email}")]).ok();
         }
+        conn.execute("DELETE FROM people_contacts WHERE account_id = ?1", [email.as_str()]).ok();
         let mut accounts = store::get_accounts(&conn);
         accounts.accounts.retain(|a| a.email != email);
         if accounts.accounts.is_empty() {
@@ -544,9 +548,9 @@ fn set_unsplash_key(key: String) -> Result<(), String> {
     secrets::set(secrets::UNSPLASH_ACCESS_KEY, k)
 }
 
-/// Recipient autocomplete: ranked contacts the active account has written to
-/// or heard from, matching the typed query. Local-only (derived from synced
-/// mail — no People-API scope).
+/// Recipient autocomplete: ranked contacts matching the typed query — the
+/// mail-derived history index merged with the account's Google contacts
+/// (People API, synced into people_contacts).
 #[tauri::command]
 fn search_contacts(state: State<'_, AppState>, query: String) -> Result<Vec<Contact>, String> {
     if query.len() > 200 {
@@ -555,6 +559,92 @@ fn search_contacts(state: State<'_, AppState>, query: String) -> Result<Vec<Cont
     let conn = state.db.lock().unwrap();
     let active = store::get_accounts(&conn).active;
     Ok(store::search_contacts(&conn, &active, &query, 8))
+}
+
+/// Pull the account's Google contacts (saved / other / directory) and replace
+/// the synced slices. Sources fail independently: a missing scope or a
+/// consumer account's absent directory skips that source, keeping its
+/// previous rows. Returns how many rows are now synced.
+async fn people_sync(app: &AppHandle, email: &str) -> Result<i64, String> {
+    let state = app.state::<AppState>();
+    // Gate on the recorded grant — no contacts scope, no People calls.
+    let granted: Option<String> = {
+        let conn = state.db.lock().unwrap();
+        store::get_json(&conn, &format!("granted_scopes:{email}"))
+    };
+    let has = |s: &str| granted.as_deref().map(|g| scope_granted(g, s)).unwrap_or(false);
+    let saved_ok = has("https://www.googleapis.com/auth/contacts.readonly");
+    let other_ok = has("https://www.googleapis.com/auth/contacts.other.readonly");
+    let dir_ok = has("https://www.googleapis.com/auth/directory.readonly");
+    if !saved_ok && !other_ok {
+        return Err("Contacts access wasn't granted — reconnect Gmail in Settings → Account".into());
+    }
+
+    let mut results: Vec<(&str, Vec<mail::people::PersonRow>)> = vec![];
+    {
+        let mut sessions = state.gmail.lock().await;
+        let session = sessions
+            .get_mut(email)
+            .ok_or("account not connected — reconnect Gmail")?;
+        if saved_ok {
+            match mail::people::fetch_contacts(&state.http, session).await {
+                Ok(rows) => results.push(("contact", rows)),
+                Err(e) => eprintln!("[people:{email}] contacts: {e}"),
+            }
+        }
+        if other_ok {
+            match mail::people::fetch_other_contacts(&state.http, session).await {
+                Ok(rows) => results.push(("other", rows)),
+                Err(e) => eprintln!("[people:{email}] other: {e}"),
+            }
+        }
+        if dir_ok {
+            // Consumer accounts have no directory — skip quietly on any error.
+            if let Ok(rows) = mail::people::fetch_directory(&state.http, session).await {
+                results.push(("directory", rows));
+            }
+        }
+    }
+    if results.is_empty() {
+        return Err("could not reach Google Contacts — check that the People API is enabled".into());
+    }
+    let mut total = 0i64;
+    {
+        let conn = state.db.lock().unwrap();
+        for (source, rows) in &results {
+            let tuples: Vec<(String, String, Option<String>)> = rows
+                .iter()
+                .map(|r| (r.email.clone(), r.name.clone(), r.photo_url.clone()))
+                .collect();
+            store::replace_people(&conn, email, source, &tuples, now_ms())?;
+            total += tuples.len() as i64;
+        }
+        let _ = store::set_json(&conn, &format!("people_synced:{email}"), &now_ms());
+    }
+    Ok(total)
+}
+
+/// Fire-and-forget people sync (connect time + the daily background refresh).
+fn spawn_people_sync(app: AppHandle, email: String) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = people_sync(&app, &email).await {
+            eprintln!("[people:{email}] sync skipped: {e}");
+        }
+    });
+}
+
+/// Settings → Account "Refresh contacts": a synchronous people sync for the
+/// active account; returns the synced row count for the toast.
+#[tauri::command]
+async fn refresh_contacts(app: AppHandle, state: State<'_, AppState>) -> Result<i64, String> {
+    let active = {
+        let conn = state.db.lock().unwrap();
+        store::active_account(&conn)
+    };
+    if active.provider != "gmail" {
+        return Err("Connect a Gmail account to sync Google contacts".into());
+    }
+    people_sync(&app, &active.email).await
 }
 
 #[tauri::command]
@@ -2401,7 +2491,8 @@ pub fn run() {
                     }
                     // Calendar cache refresh: 30s after boot, then every ~5 min
                     // (rolling window of a week back and three ahead), so the
-                    // panel paints instantly from SQLite.
+                    // panel paints instantly from SQLite. The same beat checks
+                    // whether each account's Google contacts are >24h stale.
                     if tick % 10 == 1 {
                         let emails: Vec<String> = {
                             let conn = state.db.lock().unwrap();
@@ -2412,6 +2503,17 @@ pub fn run() {
                                 .map(|a| a.email.clone())
                                 .collect()
                         };
+                        for email in &emails {
+                            let stale = {
+                                let conn = state.db.lock().unwrap();
+                                store::get_json::<i64>(&conn, &format!("people_synced:{email}"))
+                                    .map(|at| now_ms() - at > DAY_MS)
+                                    .unwrap_or(true)
+                            };
+                            if stale {
+                                spawn_people_sync(handle.clone(), email.clone());
+                            }
+                        }
                         let day_start = chrono::Local::now()
                             .date_naive()
                             .and_hms_opt(0, 0, 0)
@@ -2488,6 +2590,7 @@ pub fn run() {
             set_unsplash_key,
             lint_text,
             search_contacts,
+            refresh_contacts,
             search_all,
             load_older,
             get_settings,
