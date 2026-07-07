@@ -44,8 +44,11 @@ function NavChevron({
 
 export function Compose() {
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50">
-      <div className="zb-pop-in flex h-[82%] w-[820px] max-w-[94vw] flex-col rounded-xl border border-line-strong bg-overlay shadow-2xl">
+    // A full content-area view (Superhuman-style), NOT a dimmed popup: the
+    // opaque bg-base takes over the whole pane so the inbox never shows through,
+    // and the compose fills it as a large window-style panel.
+    <div className="zb-fade-in absolute inset-0 z-20 flex flex-col bg-base p-4">
+      <div className="mx-auto flex h-full w-full max-w-[1100px] flex-col overflow-hidden rounded-xl border border-line-strong bg-overlay shadow-2xl">
         <div className="flex items-center gap-1 border-b border-line px-5 py-3">
           <span className="text-[15px] font-semibold text-ink">New Message</span>
           <div className="flex-1" />
