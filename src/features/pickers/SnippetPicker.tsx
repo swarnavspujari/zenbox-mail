@@ -1,6 +1,14 @@
 import { useSettings } from "@/stores/settings";
-import { useUi } from "@/stores/ui";
+import { escapeHtml, useUi } from "@/stores/ui";
 import { PickerShell, type PickerItem } from "./PickerShell";
+
+/** Plain snippet text → simple paragraph HTML for the editor. */
+function paragraphsToHtml(text: string): string {
+  return text
+    .split(/\n{2,}/)
+    .map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br>") || "<br>"}</p>`)
+    .join("");
+}
 
 /** Ctrl+; — insert a Knowledge Base snippet into the draft body. */
 export function SnippetPicker() {
@@ -18,16 +26,14 @@ export function SnippetPicker() {
           label: sn.title,
           detail: `${sn.body.slice(0, 40)}…`,
           run: () => {
-            useUi.setState((s) => ({
-              compose: s.compose
-                ? {
-                    ...s.compose,
-                    body: s.compose.body
-                      ? `${s.compose.body.replace(/\s+$/, "")}\n\n${sn.body}`
-                      : sn.body,
-                  }
-                : null,
-            }));
+            // The editor is uncontrolled after seeding, so writing to
+            // compose.body would never reach it — insert via the live
+            // instance, the same way Drive chips do.
+            window.dispatchEvent(
+              new CustomEvent("fission:insert-html", {
+                detail: { html: paragraphsToHtml(sn.body) }
+              })
+            );
           },
         }));
 
