@@ -1276,6 +1276,7 @@ async fn drive_upload_chunk(
         return Err("chunk must be a raw request body".into());
     };
     let bytes = bytes.clone();
+    let len = bytes.len() as i64;
     if bytes.is_empty() {
         return Err("empty chunk".into());
     }
@@ -1284,7 +1285,7 @@ async fn drive_upload_chunk(
         let u = uploads.get(&upload_id).ok_or("unknown upload")?;
         (u.session_uri.clone(), u.account.clone(), u.sent, u.total)
     };
-    if sent + bytes.len() as i64 > total {
+    if sent + len > total {
         return Err("chunk overruns the declared file size".into());
     }
     let token = {
@@ -1295,8 +1296,7 @@ async fn drive_upload_chunk(
         session.bearer(&state.http).await?
     };
     let result =
-        mail::drive::upload_chunk(&state.http, &token, &session_uri, sent, total, bytes.clone())
-            .await;
+        mail::drive::upload_chunk(&state.http, &token, &session_uri, sent, total, bytes).await;
     match result {
         Ok(Some(file)) => {
             state.drive_uploads.lock().unwrap().remove(&upload_id);
@@ -1305,7 +1305,7 @@ async fn drive_upload_chunk(
         Ok(None) => {
             let mut uploads = state.drive_uploads.lock().unwrap();
             if let Some(u) = uploads.get_mut(&upload_id) {
-                u.sent += bytes.len() as i64;
+                u.sent += len;
             }
             Ok(DriveChunkResult { done: false, file: None })
         }

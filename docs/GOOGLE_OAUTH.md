@@ -1,7 +1,7 @@
 # Google OAuth: what your testers will see, and what verification takes
 
 Fission uses one Google Cloud OAuth client (project `fission-mail`, Desktop-app
-type). Since v0.12 it requests one fixed scope block covering Gmail, Calendar
+type). Since v0.15 it requests one fixed scope block covering Gmail, Calendar
 (full), Drive, Contacts, and send-as settings — users consent exactly once.
 This page covers the consent-screen states, exactly what beta testers
 experience, and the path past 100 users.
@@ -29,9 +29,9 @@ does *not* require verification up front.
      (`accessNotConfigured` / "has not been used in project …") for **every**
      tester, no matter how many times they reconnect. Enabling it here fixes it
      for all testers at once. (Newly enabled APIs can take a minute to propagate.)
-   - **Google Drive API** (v0.12+) — Drive attachments and oversized-file
+   - **Google Drive API** (v0.15+) — Drive attachments and oversized-file
      share links 403 with the same `accessNotConfigured` until it's on.
-   - **People API** (v0.12+) — contacts autocomplete.
+   - **People API** (v0.15+) — contacts autocomplete.
 2. <https://console.cloud.google.com/apis/credentials/consent> → project
    `fission-mail`.
 3. Confirm **User type: External**.
@@ -94,21 +94,21 @@ Cheaper alternatives if the cap ever bites before verification:
 | Scope | Why | Tier |
 |---|---|---|
 | `gmail.modify` | read, archive, label, star, trash, send | restricted |
-| `gmail.settings.basic` (v0.12+) | read send-as aliases + signatures | restricted family |
+| `gmail.settings.basic` (v0.15+) | read send-as aliases + signatures | restricted family |
 | `openid email profile` (v0.6+) | account email + profile photo in the UI | non-sensitive |
-| `calendar` (v0.12+, replaces `calendar.readonly`) | calendar panel today; event CRUD/invites next | sensitive |
-| `drive` (v0.12+) | attach from Drive, upload oversized attachments, set share permissions on send | restricted |
-| `contacts.readonly` (v0.12+) | saved-contacts recipient autocomplete | sensitive |
-| `contacts.other.readonly` (v0.12+) | "Other contacts" (people you've emailed) autocomplete | sensitive |
-| `directory.readonly` (v0.12+) | Workspace directory autocomplete (no-op on consumer accounts) | sensitive |
+| `calendar` (v0.15+, replaces `calendar.readonly`) | calendar panel today; event CRUD/invites next | sensitive |
+| `drive` (v0.15+) | attach from Drive, upload oversized attachments, set share permissions on send | restricted |
+| `contacts.readonly` (v0.15+) | saved-contacts recipient autocomplete | sensitive |
+| `contacts.other.readonly` (v0.15+) | "Other contacts" (people you've emailed) autocomplete | sensitive |
+| `directory.readonly` (v0.15+) | Workspace directory autocomplete (no-op on consumer accounts) | sensitive |
 
-### Re-consent (v0.12): every existing user reconnects once
+### Re-consent (v0.15): every existing user reconnects once
 
 There is **no incremental consent** — the app requests one fixed block with
 `prompt=consent`. Existing refresh tokens keep their old scopes, so Drive /
 People calls 403 until the user does **Disconnect → Connect Gmail** once
 (disconnect revokes server-side first, so the next connect is a clean full
-grant). The app detects pre-v0.12 grants, shows a one-time notice, and offers
+grant). The app detects pre-v0.15 grants, shows a one-time notice, and offers
 a **"Reconnect to grant new access"** button in Settings → Account.
 
 Google's consent screen shows **per-scope checkboxes** — a user can grant

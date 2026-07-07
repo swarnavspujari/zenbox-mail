@@ -146,7 +146,7 @@ function SendAsList({ email }: { email: string }) {
 }
 
 /** Feature scopes this account's grant is missing (shown in the Reconnect
- *  strip). legacyGrant (pre-v0.12 token) means all of them. */
+ *  strip). legacyGrant (pre-v0.15 token) means all of them. */
 function missingGrants(caps: Capabilities | undefined): string[] {
   if (!caps) return [];
   if (caps.legacyGrant) return ["Drive", "Contacts", "Calendar"];
