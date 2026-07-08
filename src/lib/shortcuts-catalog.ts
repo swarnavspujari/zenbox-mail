@@ -162,7 +162,7 @@ export const SHORTCUTS_CATALOG: CatalogSection[] = [
   {
     title: "Folders",
     items: [
-      { label: "Go to Inbox", keys: "g i", commands: ["goto.inbox"], status: "ready" },
+      { label: "Go to Inbox", keys: "1|g i", commands: ["goto.inbox"], status: "ready", note: "1 = Inbox, 2 = Calendar" },
       { label: "Go to Important", keys: "g i", commands: ["goto.inbox"], status: "ready", note: "The Important split" },
       { label: "Go to Other", keys: "g o", commands: ["goto.other"], status: "ready" },
       { label: "Go to Starred", keys: "g s", commands: ["goto.starred"], status: "ready" },

@@ -59,7 +59,8 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "ai.ask": "?",
   "split.next": "tab",
   "split.prev": "shift+tab",
-  "goto.inbox": "g i",
+  // Bare "1" mirrors calendar.open's "2": 1 = Inbox, 2 = Calendar.
+  "goto.inbox": "g i|1",
   "goto.other": "g o",
   "goto.done": "g e",
   "goto.reminders": "g h",

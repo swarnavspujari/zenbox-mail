@@ -63,7 +63,7 @@ function Row({
 export function ShortcutsPanel() {
   const shortcuts = useSettings((s) => s.settings.shortcuts);
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l border-line bg-surface">
+    <aside className="flex w-72 shrink-0 flex-col border-l border-line bg-surface 2xl:w-80">
       <div className="flex items-center gap-2 border-b border-line px-4 py-3">
         <span className="flex-1 text-[14px] font-semibold text-ink">
           Shortcuts

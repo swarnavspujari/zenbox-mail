@@ -52,6 +52,7 @@ export function CalendarWeek() {
     null
   );
   const colRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const focusedDay = useMemo(
     () => startOfToday() + dayOffset * DAY_MS,
@@ -77,6 +78,18 @@ export function CalendarWeek() {
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 60_000);
     return () => clearInterval(t);
+  }, []);
+
+  // On open, center the current time in the grid (Google-style). No-op when the
+  // whole 7am–8pm grid already fits without scrolling.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const now = new Date();
+    const nowH = now.getHours() + now.getMinutes() / 60;
+    const clamped = Math.min(LAST_HOUR, Math.max(FIRST_HOUR, nowH));
+    const target = (clamped - FIRST_HOUR) * PX_PER_HOUR;
+    el.scrollTop = Math.max(0, target - el.clientHeight / 2);
   }, []);
 
   /** Snap a pointer y (within a day column) to a 30-minute slot. */
@@ -191,7 +204,7 @@ export function CalendarWeek() {
               );
             })}
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
             <div
               className="relative mb-3 ml-14 mr-4"
               style={{ height: (LAST_HOUR - FIRST_HOUR) * PX_PER_HOUR }}

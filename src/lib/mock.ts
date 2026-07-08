@@ -145,6 +145,8 @@ function loadPersisted(): PersistedState {
         ["calendar.open", "g c", "g c|2"],
         ["calendar.prevDay", "left", "left|-"],
         ["calendar.nextDay", "right", "right|="],
+        // v0.16.x: bare "1" = Inbox (mirrors "2" = Calendar).
+        ["goto.inbox", "g i", "g i|1"],
       ] as const) {
         if (merged.settings.shortcuts[key] === oldV) {
           merged.settings.shortcuts[key] = newV;

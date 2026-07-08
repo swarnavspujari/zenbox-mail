@@ -68,7 +68,6 @@ export default function App() {
   const loaded = useSettings((s) => s.loaded);
   const onboarded = useSettings((s) => s.settings.onboarded);
   const accounts = useSettings((s) => s.accounts);
-  const theme = useSettings((s) => s.settings.theme);
   const showShortcutBar = useSettings((s) => s.settings.showShortcutBar);
 
   // The attribute must flip BEFORE React re-renders: HtmlBody bakes the
@@ -164,7 +163,7 @@ export default function App() {
   }
 
   return (
-    <div className="relative flex h-full bg-base">
+    <div className="relative flex h-full overflow-hidden bg-base">
       <NavRail
         view={screen === "calendar" ? "calendar" : "mail"}
         onMail={() => {
@@ -255,18 +254,14 @@ export default function App() {
         >
           ⚙
         </IconButton>
-        <IconButton
-          label="Toggle theme"
-          onClick={() => runCommandById("theme.toggle")}
-        >
-          {theme === "dark" ? "☾" : "☀"}
-        </IconButton>
+        {/* Theme toggle is intentionally NOT a button — it lives in the Fission
+            Command palette (type "theme" or "dark mode"), Superhuman-style. */}
       </header>
 
       {/* The shortcuts panel docks OUTSIDE <main> so it stays put across
           screens and thread views — the same right-hand slot the calendar
           panel occupies inside MailScreen. */}
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
       <main className="relative min-w-0 flex-1">
         {screen === "mail" && !openThreadId && <MailScreen />}
         {screen === "mail" && openThreadId && <ThreadView />}

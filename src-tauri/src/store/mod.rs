@@ -295,7 +295,8 @@ pub fn default_settings() -> Settings {
         ("ai.ask", "?"),
         ("split.next", "tab"),
         ("split.prev", "shift+tab"),
-        ("goto.inbox", "g i"),
+        // Bare "1" mirrors calendar.open's "2": 1 = Inbox, 2 = Calendar.
+        ("goto.inbox", "g i|1"),
         ("goto.other", "g o"),
         ("goto.done", "g e"),
         ("goto.reminders", "g h"),
@@ -473,6 +474,8 @@ pub fn get_settings(conn: &Connection) -> Settings {
                 ("calendar.open", "g c", "g c|2"),
                 ("calendar.prevDay", "left", "left|-"),
                 ("calendar.nextDay", "right", "right|="),
+                // v0.16.x: bare "1" = Inbox (mirrors "2" = Calendar).
+                ("goto.inbox", "g i", "g i|1"),
             ] {
                 if let Some(v) = s.shortcuts.get_mut(key) {
                     if v == old {

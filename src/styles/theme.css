@@ -233,6 +233,20 @@ body {
   background: transparent;
 }
 
+/* Lock every vertical-scroll pane to the Y axis, app-wide. Tailwind's
+   `overflow-y-auto` emits only `overflow-y:auto` and leaves `overflow-x` at
+   `visible`, which the CSS Overflow spec re-computes to `auto` — so a trackpad's
+   horizontal component can drift these panes sideways. Pinning overflow-x hidden
+   kills that diagonal drift; overscroll-behavior:contain stops scroll-chaining.
+   Wide email content still scrolls horizontally inside its own iframe (#fm-root
+   in ThreadView), which is a separate scroll root and unaffected by this. */
+@layer utilities {
+  .overflow-y-auto {
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+  }
+}
+
 /* Reading pane content may select text */
 .selectable,
 .selectable * {

@@ -23,6 +23,9 @@ export interface Command {
   title: string;
   /** Section header in the palette. */
   group: string;
+  /** Extra search terms (space-separated) the palette matches besides the
+   *  title — e.g. "dark mode light mode" for the theme command. */
+  keywords?: string;
   hidden?: boolean;
   when?: () => boolean;
   run: () => void | Promise<void>;
@@ -172,6 +175,36 @@ function advanceConversation(dir: 1 | -1) {
   }
 }
 
+/** Snapshot the cursor position of the thread(s) about to be triaged, BEFORE
+ *  they're removed from the list. Reading = the open thread is one of the
+ *  targets; idx is its row (so we can land on whatever slides into that row). */
+export function triageAnchor(ids: ThreadId[]): { wasReading: boolean; idx: number } {
+  const m = mail();
+  const openId = m.openThreadId;
+  const wasReading = openId != null && ids.includes(openId);
+  const idx = wasReading
+    ? visibleThreads(m).findIndex((t) => t.id === openId)
+    : m.selectedIndex;
+  return { wasReading, idx };
+}
+
+/** After a triage action removes its target(s), keep the user in flow: if they
+ *  were reading, open the email that slid into the removed one's place (the
+ *  Superhuman "next email down"); if the section is now empty, drop to the list
+ *  so the inbox-zero / rest state shows. In list mode this just re-anchors the
+ *  cursor so it never strands past the end of a shortened list. Call AFTER the
+ *  optimistic removal has completed. */
+export async function advanceAfterTriage(anchor: { wasReading: boolean; idx: number }) {
+  const list = visibleThreads(useMail.getState());
+  if (list.length === 0) {
+    mail().closeThread();
+    return;
+  }
+  const next = Math.max(0, Math.min(anchor.idx, list.length - 1));
+  mail().select(next);
+  if (anchor.wasReading) await mail().openThread(list[next].id);
+}
+
 /** The new-message composer's ↑/↓ header chevrons (and K/J): background the
  *  in-progress draft and jump to the previous/next email, opening it full-screen
  *  — the Superhuman "flip through the inbox from compose" move. Unlike
@@ -258,9 +291,10 @@ export function allCommands(): Command[] {
       run: async () => {
         const ids = actionTargetThreadIds();
         if (ids.length === 0) return;
-        if (ids.includes(mail().openThreadId ?? "")) mail().closeThread();
+        const anchor = triageAnchor(ids);
         for (const id of ids) await mail().archive(id);
         mail().clearSelection();
+        await advanceAfterTriage(anchor);
         const label = bulkLabel("Mark Done", ids.length);
         pushTriageUndo(label, async () => {
           for (const id of ids) await mail().moveToInbox(id);
@@ -304,9 +338,10 @@ export function allCommands(): Command[] {
       run: async () => {
         const ids = actionTargetThreadIds();
         if (ids.length === 0) return;
-        if (ids.includes(mail().openThreadId ?? "")) mail().closeThread();
+        const anchor = triageAnchor(ids);
         for (const id of ids) await mail().hide(id, "trash");
         mail().clearSelection();
+        await advanceAfterTriage(anchor);
         const label = bulkLabel("Trash", ids.length);
         pushTriageUndo(label, async () => {
           for (const id of ids) await mail().restore(id);
@@ -327,8 +362,9 @@ export function allCommands(): Command[] {
       run: async () => {
         const id = actionTargetThreadId();
         if (!id) return;
-        if (mail().openThreadId === id) mail().closeThread();
+        const anchor = triageAnchor([id]);
         await mail().hide(id, "spam");
+        await advanceAfterTriage(anchor);
         pushTriageUndo("Mark Spam", () => mail().restore(id));
         ui().showToast("Marked spam — Z to undo");
         await ui().checkInboxZero();
@@ -342,8 +378,9 @@ export function allCommands(): Command[] {
       run: async () => {
         const id = actionTargetThreadId();
         if (!id) return;
-        if (mail().openThreadId === id) mail().closeThread();
+        const anchor = triageAnchor([id]);
         await mail().mute(id);
+        await advanceAfterTriage(anchor);
         pushTriageUndo("Mute", () => mail().unmute(id));
         ui().showToast("Muted — Z to undo");
         await ui().checkInboxZero();
@@ -815,8 +852,15 @@ export function allCommands(): Command[] {
     },
     {
       id: "theme.toggle",
-      title: "Toggle Light / Dark Theme",
+      // Superhuman-style dynamic label naming the theme it switches TO. Rebuilt
+      // every allCommands() call (the palette re-reads it on open), so it always
+      // reflects the live theme.
+      title:
+        useSettings.getState().settings.theme === "dark"
+          ? "Theme: Light (Disable Dark Mode)"
+          : "Theme: Dark (Disable Light Mode)",
       group: "General",
+      keywords: "theme dark mode light mode appearance color scheme",
       run: () => {
         const s = useSettings.getState();
         void s.save({ theme: s.settings.theme === "dark" ? "light" : "dark" });

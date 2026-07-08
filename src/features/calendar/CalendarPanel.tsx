@@ -80,6 +80,7 @@ export function CalendarPanel() {
   const [nowTick, setNowTick] = useState(Date.now());
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const dayStart = useMemo(() => startOfToday() + dayOffset * DAY_MS, [dayOffset]);
 
   useEffect(() => {
@@ -91,6 +92,18 @@ export function CalendarPanel() {
   useEffect(() => {
     const t = setInterval(() => setNowTick(Date.now()), 60_000);
     return () => clearInterval(t);
+  }, []);
+
+  // Center the current time in view on open (Google-style); no-op when the
+  // 7am–8pm grid already fits.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const now = new Date();
+    const nowH = now.getHours() + now.getMinutes() / 60;
+    const clamped = Math.min(LAST_HOUR, Math.max(FIRST_HOUR, nowH));
+    const target = (clamped - FIRST_HOUR) * PX_PER_HOUR;
+    el.scrollTop = Math.max(0, target - el.clientHeight / 2);
   }, []);
 
   /** Snap a pointer y to a 30-minute slot inside the visible hours. */
@@ -152,7 +165,7 @@ export function CalendarPanel() {
   return (
     <aside
       onMouseDown={() => useUi.getState().setFocusRegion("calendar")}
-      className={`flex w-72 shrink-0 flex-col border-l bg-surface ${
+      className={`flex w-64 shrink-0 flex-col border-l bg-surface 2xl:w-72 ${
         focused ? "border-accent/40" : "border-line"
       }`}
     >
@@ -217,7 +230,7 @@ export function CalendarPanel() {
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         {error ? (
           // The Rust core classifies the cause (API-not-enabled vs. missing
           // scope vs. generic) into actionable guidance — show it verbatim.

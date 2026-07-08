@@ -48,7 +48,7 @@ export function ContactPanel({
   const website = domain && !FREEMAIL.has(domain.toLowerCase()) ? domain : null;
 
   return (
-    <aside className="flex w-[280px] shrink-0 flex-col gap-3.5 overflow-y-auto border-l border-line bg-surface px-[22px] py-[18px]">
+    <aside className="flex w-56 shrink-0 flex-col gap-3.5 overflow-y-auto border-l border-line bg-surface px-[22px] py-[18px] xl:w-64 2xl:w-[280px]">
       <Avatar name={name} email={email} size={44} />
       <div>
         <div className="text-[21px] font-semibold tracking-tight text-ink">

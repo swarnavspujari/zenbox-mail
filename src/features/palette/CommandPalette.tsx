@@ -32,7 +32,13 @@ export function CommandPalette() {
       (c) => !c.hidden && (!c.when || c.when())
     );
     return available
-      .map((c) => ({ c, score: fuzzyScore(query, c.title) }))
+      .map((c) => ({
+        c,
+        score: Math.max(
+          fuzzyScore(query, c.title),
+          c.keywords ? fuzzyScore(query, c.keywords) : -1
+        ),
+      }))
       .filter((x) => x.score >= 0)
       .sort((a, b) => b.score - a.score)
       .map((x) => x.c);

@@ -83,7 +83,11 @@ function HtmlBody({
       body{background:${v("--bg-raised", "#ffffff")};color:${v("--text-primary", "#1d222b")};
            font:13.5px/1.55 "Segoe UI",system-ui,sans-serif;
            padding:16px 18px;word-break:break-word;overflow-x:hidden}
-      #fm-root{overflow:hidden}
+      /* Wide content (fixed-width tables, <pre>, oversized imgs) gets a
+         horizontal scrollbar INSIDE the email box rather than being clipped.
+         #fm-root is its own scroll root, so this axis can never chain into the
+         reading pane — no diagonal drift. height:auto means y never overflows. */
+      #fm-root{overflow-x:auto;overflow-y:hidden}
       img{max-width:100%;height:auto}
       table{max-width:100%}
       a{color:${v("--accent-strong", "#3b52c4")}}
@@ -306,36 +310,40 @@ function InstantReplies() {
 
   if (suggestions.length === 0) return null;
   return (
-    <div className="border-t border-line bg-surface px-7 py-3">
-      <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.06em] text-ink-3">
-        <span aria-hidden className="text-accent-strong">
-          ✦
-        </span>
-        Instant replies — <span className="kbd">Tab</span> preview ·{" "}
-        <span className="kbd">R</span> use
-      </div>
-      <div className="flex gap-2">
-        {suggestions.map((s, i) => (
-          <button
-            key={i}
-            onClick={() => {
-              useUi.setState({ suggestionIndex: i });
-            }}
-            className={`max-w-[32%] truncate rounded-full border px-3.5 py-1.5 text-[12.5px] transition-colors ${
-              idx === i
-                ? "border-accent bg-accent-dim text-ink"
-                : "border-line-strong bg-raised text-ink-2 hover:bg-hover"
-            }`}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
-      {idx !== null && (
-        <div className="zb-fade-in mt-2 whitespace-pre-wrap rounded-md border border-line bg-raised px-3 py-2 text-[13px] leading-relaxed text-ink">
-          {suggestions[idx]}
+    <div className="border-t border-line bg-surface py-3">
+      {/* Content aligns to the same centered 760px column as the email body
+          above; the divider/background stay full-bleed across the pane. */}
+      <div className="mx-auto w-full max-w-[760px] px-7">
+        <div className="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.06em] text-ink-3">
+          <span aria-hidden className="text-accent-strong">
+            ✦
+          </span>
+          Instant replies — <span className="kbd">Tab</span> preview ·{" "}
+          <span className="kbd">R</span> use
         </div>
-      )}
+        <div className="flex gap-2">
+          {suggestions.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => {
+                useUi.setState({ suggestionIndex: i });
+              }}
+              className={`max-w-[32%] truncate rounded-full border px-3.5 py-1.5 text-[12.5px] transition-colors ${
+                idx === i
+                  ? "border-accent bg-accent-dim text-ink"
+                  : "border-line-strong bg-raised text-ink-2 hover:bg-hover"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+        {idx !== null && (
+          <div className="zb-fade-in mt-2 whitespace-pre-wrap rounded-md border border-line bg-raised px-3 py-2 text-[13px] leading-relaxed text-ink">
+            {suggestions[idx]}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -428,10 +436,10 @@ export function ThreadView() {
                   ))}
                 </div>
               )}
-              <h1 className="text-[22px] font-semibold leading-snug tracking-tight text-ink">
+              <h1 className="selectable text-[22px] font-semibold leading-snug tracking-tight text-ink">
                 {subject}
               </h1>
-              <div className="mt-1 text-[12px] text-ink-3">
+              <div className="selectable mt-1 text-[12px] text-ink-3">
                 {messages.length} message{messages.length > 1 ? "s" : ""}
               </div>
             </div>
