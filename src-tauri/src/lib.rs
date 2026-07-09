@@ -3,6 +3,7 @@
 mod ai;
 mod harper;
 mod mail;
+mod search;
 mod secrets;
 mod store;
 mod types;
@@ -28,6 +29,9 @@ pub struct AppState {
     /// abandoned by a crash/quit just expire server-side (~1 week).
     drive_uploads: Mutex<HashMap<u64, DriveUpload>>,
     drive_upload_seq: std::sync::atomic::AtomicU64,
+    /// Overlap guard for the history crawl: a throttled beat can outlast the
+    /// 30s sync tick, and later ticks must skip instead of stacking beats.
+    crawl_busy: AtomicBool,
 }
 
 struct DriveUpload {
@@ -1483,6 +1487,57 @@ fn sync_in_background(app: AppHandle) {
     });
 }
 
+/// One history-crawl beat (a single listing page per account), spawned off
+/// the sync loop so a throttled beat never delays the 30s sync cadence. No
+/// mail:updated is emitted — the crawl surfaces old mail, and search reads
+/// the DB directly on the next keystroke.
+fn spawn_history_crawl(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        if state
+            .crawl_busy
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return;
+        }
+        let emails: Vec<String> = {
+            let conn = state.db.lock().unwrap();
+            store::get_accounts(&conn)
+                .accounts
+                .iter()
+                .filter(|a| a.provider == "gmail")
+                .map(|a| a.email.clone())
+                .collect()
+        };
+        for email in emails {
+            // Only crawl once the account's first reconcile stored its
+            // baseline — never race the initial backfill for the same threads.
+            let ready = {
+                let conn = state.db.lock().unwrap();
+                store::get_json::<String>(&conn, &format!("history:{email}")).is_some()
+            };
+            if !ready {
+                continue;
+            }
+            match mail::sync::crawl_step(&state.http, &state.gmail, &state.db, &email).await {
+                // steady state after the walk finishes: nothing to report
+                Ok(b) if b.done && b.fetched == 0 && b.skipped == 0 && b.failed == 0 => {}
+                Ok(b) => eprintln!(
+                    "[crawl:{email}] +{} indexed, {} already local, {} deferred — {} crawled total{}",
+                    b.fetched,
+                    b.skipped,
+                    b.failed,
+                    b.total_indexed,
+                    if b.done { "; full history indexed" } else { "" }
+                ),
+                Err(e) => eprintln!("[crawl:{email}] {e}"),
+            }
+        }
+        state.crawl_busy.store(false, Ordering::SeqCst);
+    });
+}
+
 #[tauri::command]
 async fn sync_now(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     {
@@ -2053,9 +2108,11 @@ fn search_threads(state: State<'_, AppState>, query: String) -> Result<Vec<Searc
     store::search(&conn, &query, &active)
 }
 
-/// Full-history search: the local FTS results (instant, from `search_threads`)
-/// plus a live Gmail search so mail older than the local cache is findable.
-/// Matched threads are fetched + indexed so later local searches include them.
+/// Full-history search: plan the query (AI for natural language when a
+/// provider is configured, deterministic otherwise), run the planned local
+/// search, then a live Gmail pass so mail older than the local cache is
+/// findable. Matched threads are fetched + indexed so later local searches
+/// include them.
 #[tauri::command]
 async fn search_all(
     state: State<'_, AppState>,
@@ -2064,21 +2121,57 @@ async fn search_all(
     if query.trim().is_empty() || query.len() > 200 {
         return Ok(vec![]);
     }
-    let (active, is_gmail, local) = {
+    let (active, is_gmail, provider) = {
         let conn = state.db.lock().unwrap();
         let acct = store::active_account(&conn);
-        let local = store::search(&conn, &query, &acct.email)?;
-        (acct.email.clone(), acct.provider == "gmail", local)
+        // AI planning only pays off for natural-language phrasings; a
+        // missing/unkeyed provider silently means deterministic.
+        let provider = if search::looks_natural(&query) {
+            ai::resolve(&store::get_settings(&conn), None).ok()
+        } else {
+            None
+        };
+        (acct.email.clone(), acct.provider == "gmail", provider)
+    };
+    // The parse call is capped well under the http client's 120s timeout —
+    // a slow provider must degrade to the deterministic plan, not stall the
+    // whole search pass.
+    let mut plan: Option<search::SearchPlan> = None;
+    if let Some(p) = provider {
+        let today = chrono::Local::now().format("%Y-%m-%d (%A)").to_string();
+        let sys = search::ai_system_prompt(&today);
+        if let Ok(Ok(raw)) = tokio::time::timeout(
+            std::time::Duration::from_secs(8),
+            ai::complete(&state.http, &p, &sys, &query),
+        )
+        .await
+        {
+            plan = search::parse_ai_plan(&raw);
+        }
+    }
+    let ai_planned = plan.is_some();
+    let plan = plan.unwrap_or_else(|| search::parse_deterministic(&query));
+    let local = {
+        let conn = state.db.lock().unwrap();
+        store::search_planned(&conn, &plan, &active)?
     };
     if !is_gmail {
         return Ok(local); // demo mode has no server to reach past
+    }
+    // Remote pass: AI plans are rebuilt as operator syntax (terms + from:/
+    // to: + after:/before:) — Gmail searches structure better than prose.
+    // Deterministic queries go through raw, preserving operators the local
+    // plan can't honor (has:, in:, label:, …).
+    let remote_q = if ai_planned { search::to_remote_query(&plan) } else { query.clone() };
+    if remote_q.trim().is_empty() {
+        return Ok(local);
     }
     // Live Gmail search (Gmail's q excludes trash/spam by default, matching
     // the local `hidden IS NULL` filter). Network failure → local-only.
     let remote_ids: Vec<String> = {
         let mut sessions = state.gmail.lock().await;
         let Some(session) = sessions.get_mut(&active) else { return Ok(local) };
-        match session.list_thread_ids_paged(&state.http, &query, 50).await {
+        match session.list_thread_ids_paged(&state.http, &remote_q, 50).await {
             Ok(v) => v.into_iter().map(|(id, _)| id).collect(),
             Err(_) => return Ok(local),
         }
@@ -3082,6 +3175,7 @@ pub fn run() {
                 cancels: Mutex::new(HashMap::new()),
                 drive_uploads: Mutex::new(HashMap::new()),
                 drive_upload_seq: std::sync::atomic::AtomicU64::new(1),
+                crawl_busy: AtomicBool::new(false),
             });
 
             // Dev-only: FISSION_AI_SMOKE=1 streams one real draft at startup and
@@ -3238,6 +3332,12 @@ pub fn run() {
                                 changed |= c;
                             }
                         }
+                    }
+                    // History crawl: one page per tick toward a fully-indexed
+                    // mailbox (guarded against overlap; skips reconcile ticks
+                    // to leave them their quota headroom).
+                    if tick % 20 != 0 {
+                        spawn_history_crawl(handle.clone());
                     }
                     // Calendar sync: 30s after boot, then every ~5 min — an
                     // incremental syncToken pull per calendar (initial pass

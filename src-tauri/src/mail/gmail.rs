@@ -250,6 +250,38 @@ impl GmailSession {
         Ok(out)
     }
 
+    /// One listing page: (thread_id, history_id) pairs plus the nextPageToken
+    /// (None = listing exhausted). Unlike list_thread_ids_paged, the paging
+    /// state crosses the call boundary — the resumable history crawl persists
+    /// the token between beats.
+    pub async fn list_threads_page(
+        &mut self,
+        http: &reqwest::Client,
+        query: &str,
+        page_token: Option<&str>,
+    ) -> Result<(Vec<(String, String)>, Option<String>), String> {
+        let mut url = format!(
+            "{BASE}/threads?maxResults=100&q={}",
+            url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>()
+        );
+        if let Some(t) = page_token {
+            url.push_str(&format!("&pageToken={t}"));
+        }
+        let v = self.get_json(http, &url).await?;
+        let mut out: Vec<(String, String)> = vec![];
+        if let Some(arr) = v["threads"].as_array() {
+            for t in arr {
+                if let Some(id) = t["id"].as_str() {
+                    out.push((
+                        id.to_string(),
+                        t["historyId"].as_str().unwrap_or_default().to_string(),
+                    ));
+                }
+            }
+        }
+        Ok((out, v["nextPageToken"].as_str().map(str::to_string)))
+    }
+
     /// The account's current profile (email + latest historyId) — the
     /// baseline for incremental sync.
     pub async fn profile(&mut self, http: &reqwest::Client) -> Result<Value, String> {

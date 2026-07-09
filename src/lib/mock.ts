@@ -489,28 +489,120 @@ export class MockBackend implements Backend {
     this.notify();
   }
 
-  async search(query: string): Promise<SearchResult[]> {
-    const q = query.toLowerCase();
-    if (!q) return [];
-    const hits: SearchResult[] = [];
-    for (const t of this.threads.filter((t) => this.inActiveAccount(t))) {
-      const msgs = this.messages.get(t.id) ?? [];
-      const hay = [
-        t.subject,
-        ...msgs.map((m) => `${m.fromName} ${m.from} ${m.bodyText}`),
-      ]
-        .join("\n")
-        .toLowerCase();
-      if (hay.includes(q)) {
-        hits.push({
-          threadId: t.id,
-          subject: t.subject,
-          snippet: t.snippet,
-          lastDate: t.lastDate,
-        });
+  /** Mirrors the Rust core's deterministic query planner: from:/to: →
+   *  people, after:/before: → a date window, quoted phrases stay whole,
+   *  other operators (has:, in:, …) drop — the demo has no server to honor
+   *  them. */
+  private parseQuery(query: string) {
+    const tokens: string[] = [];
+    let cur = "";
+    let inQuotes = false;
+    for (const c of query) {
+      if (c === '"') {
+        inQuotes = !inQuotes;
+        cur += c;
+      } else if (/\s/.test(c) && !inQuotes) {
+        if (cur) {
+          tokens.push(cur);
+          cur = "";
+        }
+      } else {
+        cur += c;
       }
     }
-    return hits.sort((a, b) => b.lastDate - a.lastDate);
+    if (cur) tokens.push(cur);
+
+    const unquote = (s: string) => s.replace(/^"|"$/g, "").trim();
+    const dateMs = (v: string) => {
+      const m = unquote(v).match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+      return m ? new Date(+m[1], +m[2] - 1, +m[3]).getTime() : null;
+    };
+    const people: string[] = [];
+    const terms: string[] = [];
+    let after: number | null = null;
+    let before: number | null = null;
+    for (const tok of tokens) {
+      const lower = tok.toLowerCase();
+      if (lower.startsWith("from:") || lower.startsWith("to:")) {
+        const p = unquote(lower.slice(lower.indexOf(":") + 1));
+        if (p) people.push(p);
+      } else if (lower.startsWith("after:")) {
+        after = dateMs(lower.slice(6));
+      } else if (lower.startsWith("before:")) {
+        before = dateMs(lower.slice(7));
+      } else if (/^[a-z]+:/.test(lower)) {
+        // Gmail-only operator — nothing local to honor in the demo
+      } else {
+        const t = unquote(lower);
+        if (t) terms.push(t);
+      }
+    }
+    return { people, terms, after, before };
+  }
+
+  async search(query: string): Promise<SearchResult[]> {
+    const { people, terms, after, before } = this.parseQuery(query);
+    if (!people.length && !terms.length && after == null && before == null)
+      return [];
+    const hits: { r: SearchResult; score: number }[] = [];
+    for (const t of this.threads.filter((t) => this.inActiveAccount(t))) {
+      if (after != null && t.lastDate < after) continue;
+      if (before != null && t.lastDate >= before) continue;
+      const msgs = this.messages.get(t.id) ?? [];
+      // People narrow every route; person-only queries rank sender matches
+      // (they wrote) above recipient matches (user wrote to them).
+      let pscore = 0;
+      for (const p of people) {
+        for (const m of msgs) {
+          if (`${m.fromName} ${m.from}`.toLowerCase().includes(p)) {
+            pscore = Math.max(pscore, 2);
+          } else if (
+            [...m.to, ...m.cc].join("\n").toLowerCase().includes(p)
+          ) {
+            pscore = Math.max(pscore, 1);
+          }
+        }
+      }
+      if (people.length && !pscore) continue;
+
+      const result: SearchResult = {
+        threadId: t.id,
+        subject: t.subject,
+        snippet: t.snippet,
+        lastDate: t.lastDate,
+      };
+      if (terms.length) {
+        const subject = t.subject.toLowerCase();
+        const from = msgs
+          .map((m) => `${m.fromName} ${m.from}`)
+          .join("\n")
+          .toLowerCase();
+        const body = msgs.map((m) => m.bodyText).join("\n").toLowerCase();
+        // Mirrors the Rust core's weighted bm25 ordering: subject 10× and
+        // from 5× outrank body 1×; every term must match somewhere (FTS AND).
+        let score = 0;
+        let all = true;
+        for (const term of terms) {
+          const s =
+            (subject.includes(term) ? 10 : 0) +
+            (from.includes(term) ? 5 : 0) +
+            (body.includes(term) ? 1 : 0);
+          if (!s) {
+            all = false;
+            break;
+          }
+          score += s;
+        }
+        if (!all) continue;
+        hits.push({ r: result, score });
+      } else {
+        // person / date-window routes rank by from-vs-to match, then recency
+        hits.push({ r: result, score: pscore });
+      }
+    }
+    return hits
+      .sort((a, b) => b.score - a.score || b.r.lastDate - a.r.lastDate)
+      .map((h) => h.r);
   }
   // Demo has no server past the fixtures, so full-history search == local
   // search and there's nothing older to page in.

@@ -1661,34 +1661,170 @@ pub fn list_labels(conn: &Connection) -> Result<Vec<String>, String> {
     Ok(set.into_iter().collect())
 }
 
+/// Instant local search: deterministic operator-aware parse, then the
+/// planned query below.
 pub fn search(conn: &Connection, query: &str, account_id: &str) -> Result<Vec<SearchResult>, String> {
-    if query.trim().is_empty() {
-        return Ok(vec![]);
-    }
-    // FTS5 prefix query built from sanitized terms so raw user input can't
-    // break the match-expression syntax.
-    let terms: Vec<String> = query
-        .split_whitespace()
-        .map(|t| {
-            let clean: String = t.chars().filter(|c| c.is_alphanumeric()).collect();
-            format!("\"{clean}\"*")
+    search_planned(conn, &crate::search::parse_deterministic(query), account_id)
+}
+
+/// FTS5 match expression from planned terms: single terms as quoted prefix
+/// queries, multi-word terms as exact phrases — cleaned per word so raw user
+/// input can't break the match syntax. None = nothing searchable.
+fn fts_match_expr(terms: &[String]) -> Option<String> {
+    let parts: Vec<String> = terms
+        .iter()
+        .filter_map(|t| {
+            let words: Vec<String> = t
+                .split_whitespace()
+                .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>())
+                .filter(|w| !w.is_empty())
+                .collect();
+            match words.len() {
+                0 => None,
+                1 => Some(format!("\"{}\"*", words[0])),
+                _ => Some(format!("\"{}\"", words.join(" "))),
+            }
         })
-        .filter(|t| t.len() > 3)
         .collect();
-    if terms.is_empty() {
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+/// Escape LIKE wildcards in user text; pair with ESCAPE '\'.
+fn like_pattern(needle: &str) -> String {
+    let mut esc = String::with_capacity(needle.len() + 2);
+    for c in needle.chars() {
+        if c == '\\' || c == '%' || c == '_' {
+            esc.push('\\');
+        }
+        esc.push(c);
+    }
+    format!("%{esc}%")
+}
+
+/// Routed local search over a parsed plan:
+/// - terms → bm25-ranked FTS (with people/date narrowing);
+/// - people only → that contact's threads, from-matches (they wrote) above
+///   to-matches (user wrote to them), most recent first;
+/// - dates only → the window, most recent first.
+pub fn search_planned(
+    conn: &Connection,
+    plan: &crate::search::SearchPlan,
+    account_id: &str,
+) -> Result<Vec<SearchResult>, String> {
+    use rusqlite::types::Value;
+    if plan.is_empty() {
         return Ok(vec![]);
     }
-    let match_expr = terms.join(" ");
-    let mut stmt = conn
-        .prepare(
-            "SELECT t.id, t.subject, t.snippet, t.last_date
-             FROM mail_fts f JOIN threads t ON t.id = f.thread_id
-             WHERE mail_fts MATCH ?1 AND t.account_id = ?2 AND t.hidden IS NULL
-             GROUP BY t.id ORDER BY t.last_date DESC LIMIT 60",
-        )
-        .map_err(|e| e.to_string())?;
+
+    let mut sql: String;
+    let mut params_v: Vec<Value> = vec![];
+
+    if let Some(match_expr) = fts_match_expr(&plan.terms) {
+        // bm25 is only valid directly inside the full-text query — SQLite
+        // rejects it as an aggregate argument, and the query flattener
+        // hoists it out of a plain subquery — so the MATERIALIZED CTE pins
+        // per-message scores first and everything downstream touches only
+        // plain values. Weights are positional over ALL declared columns
+        // (thread_id UNINDEXED gets the 0.0 placeholder): subject 10× and
+        // from_text 5× outrank body 1×. bm25 is negative-better → MIN is
+        // each thread's best match and ASC sorts best-first; ties fall back
+        // to recency.
+        sql = String::from(
+            "WITH f AS MATERIALIZED (
+                 SELECT thread_id, bm25(mail_fts, 0.0, 10.0, 5.0, 1.0) AS score
+                 FROM mail_fts WHERE mail_fts MATCH ?)
+             SELECT t.id, t.subject, t.snippet, t.last_date
+             FROM (SELECT thread_id, MIN(score) AS score FROM f GROUP BY thread_id) g
+             JOIN threads t ON t.id = g.thread_id
+             WHERE t.account_id = ? AND t.hidden IS NULL",
+        );
+        params_v.push(Value::Text(match_expr));
+        params_v.push(Value::Text(account_id.to_string()));
+        if let Some(ms) = plan.after {
+            sql.push_str(" AND t.last_date >= ?");
+            params_v.push(Value::Integer(ms));
+        }
+        if let Some(ms) = plan.before {
+            sql.push_str(" AND t.last_date < ?");
+            params_v.push(Value::Integer(ms));
+        }
+        for p in &plan.people {
+            sql.push_str(
+                " AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id
+                   AND (m.from_addr LIKE ? ESCAPE '\\' OR m.from_name LIKE ? ESCAPE '\\'
+                        OR m.to_addrs LIKE ? ESCAPE '\\' OR m.cc_addrs LIKE ? ESCAPE '\\'))",
+            );
+            let pat = like_pattern(p);
+            for _ in 0..4 {
+                params_v.push(Value::Text(pat.clone()));
+            }
+        }
+        sql.push_str(" ORDER BY g.score ASC, t.last_date DESC LIMIT 60");
+    } else if !plan.people.is_empty() {
+        // Most-recent-per-contact: sender matches (2) outrank recipient
+        // matches (1); several people are OR'd (any of them qualifies).
+        let from_cond: Vec<&str> = plan
+            .people
+            .iter()
+            .map(|_| "(m.from_addr LIKE ? ESCAPE '\\' OR m.from_name LIKE ? ESCAPE '\\')")
+            .collect();
+        let rcpt_cond: Vec<&str> = plan
+            .people
+            .iter()
+            .map(|_| "(m.to_addrs LIKE ? ESCAPE '\\' OR m.cc_addrs LIKE ? ESCAPE '\\')")
+            .collect();
+        sql = format!(
+            "SELECT t.id, t.subject, t.snippet, t.last_date,
+                    MAX(CASE WHEN {} THEN 2 WHEN {} THEN 1 ELSE 0 END) AS pscore
+             FROM threads t JOIN messages m ON m.thread_id = t.id
+             WHERE t.account_id = ? AND t.hidden IS NULL",
+            from_cond.join(" OR "),
+            rcpt_cond.join(" OR "),
+        );
+        for p in &plan.people {
+            let pat = like_pattern(p);
+            params_v.push(Value::Text(pat.clone()));
+            params_v.push(Value::Text(pat));
+        }
+        for p in &plan.people {
+            let pat = like_pattern(p);
+            params_v.push(Value::Text(pat.clone()));
+            params_v.push(Value::Text(pat));
+        }
+        params_v.push(Value::Text(account_id.to_string()));
+        if let Some(ms) = plan.after {
+            sql.push_str(" AND t.last_date >= ?");
+            params_v.push(Value::Integer(ms));
+        }
+        if let Some(ms) = plan.before {
+            sql.push_str(" AND t.last_date < ?");
+            params_v.push(Value::Integer(ms));
+        }
+        sql.push_str(
+            " GROUP BY t.id HAVING pscore > 0
+              ORDER BY pscore DESC, t.last_date DESC LIMIT 60",
+        );
+    } else {
+        // Date window only ("in March") — recent threads in range.
+        sql = String::from(
+            "SELECT id, subject, snippet, last_date FROM threads
+             WHERE account_id = ? AND hidden IS NULL AND last_date >= ? AND last_date < ?
+             ORDER BY last_date DESC LIMIT 60",
+        );
+        params_v.push(Value::Text(account_id.to_string()));
+        params_v.push(Value::Integer(plan.after.unwrap_or(i64::MIN)));
+        params_v.push(Value::Integer(plan.before.unwrap_or(i64::MAX)));
+    }
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    // Collect row errors instead of swallowing them: a step-time SQL error
+    // must surface as a failed search, never as silently-empty results.
     let rows = stmt
-        .query_map(params![match_expr, account_id], |r| {
+        .query_map(rusqlite::params_from_iter(params_v), |r| {
             Ok(SearchResult {
                 thread_id: r.get(0)?,
                 subject: r.get(1)?,
@@ -1697,8 +1833,8 @@ pub fn search(conn: &Connection, query: &str, account_id: &str) -> Result<Vec<Se
             })
         })
         .map_err(|e| e.to_string())?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
     Ok(rows)
 }
 
@@ -1746,3 +1882,138 @@ pub fn inbox_threads_for_sweep(conn: &Connection, account_id: &str) -> Result<Ve
     list_threads(conn, "inbox", account_id)
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{Message, Thread};
+
+    const ACCT: &str = "acct@x.test";
+
+    pub fn seed(conn: &Connection, id: &str, subject: &str, body: &str, from: &str, date: i64) {
+        let t = Thread {
+            id: id.into(),
+            subject: subject.into(),
+            snippet: body.chars().take(50).collect(),
+            participants: vec![from.into()],
+            message_count: 1,
+            last_date: date,
+            unread: false,
+            starred: false,
+            labels: vec![],
+            in_inbox: true,
+            snoozed_until: None,
+        };
+        let m = Message {
+            id: format!("{id}-m1"),
+            thread_id: id.into(),
+            from: format!("{}@x.test", from.to_lowercase()),
+            from_name: from.into(),
+            to: vec!["you@x.test".into()],
+            cc: vec![],
+            subject: subject.into(),
+            snippet: String::new(),
+            body_text: body.into(),
+            body_html: None,
+            date,
+            unread: false,
+            attachments: vec![],
+        };
+        upsert_thread(conn, ACCT, &t, &[(m, None, None, None, vec![])]).unwrap();
+    }
+
+    #[test]
+    fn bm25_ranks_subject_matches_over_body_matches() {
+        let conn = open(std::path::Path::new(":memory:")).unwrap();
+        // The body-only match is NEWER — the old last_date ordering would
+        // have put it first; weighted bm25 must not.
+        seed(&conn, "t-body", "Quarterly plans", "the roadmap deck is attached", "Ann", 2_000);
+        seed(&conn, "t-subj", "Roadmap review", "see you tomorrow", "Bob", 1_000);
+        let hits = search(&conn, "roadmap", ACCT).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].thread_id, "t-subj");
+        assert_eq!(hits[1].thread_id, "t-body");
+    }
+
+    #[test]
+    fn equal_relevance_falls_back_to_recency() {
+        let conn = open(std::path::Path::new(":memory:")).unwrap();
+        seed(&conn, "t-old", "Invoice March", "amount due", "Ann", 1_000);
+        seed(&conn, "t-new", "Invoice April", "amount due", "Ann", 2_000);
+        let hits = search(&conn, "invoice", ACCT).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].thread_id, "t-new");
+        assert_eq!(hits[1].thread_id, "t-old");
+    }
+
+    #[test]
+    fn person_query_ranks_senders_over_recipients() {
+        let conn = open(std::path::Path::new(":memory:")).unwrap();
+        // Maya sent this one (older)…
+        seed(&conn, "t-from", "Deck feedback", "here are my notes", "Maya", 1_000);
+        // …and the user wrote TO Maya in this newer one: the recipient match
+        // must still rank below the sender match.
+        let t = Thread {
+            id: "t-to".into(),
+            subject: "Intro thread".into(),
+            snippet: String::new(),
+            participants: vec!["You".into()],
+            message_count: 1,
+            last_date: 2_000,
+            unread: false,
+            starred: false,
+            labels: vec![],
+            in_inbox: true,
+            snoozed_until: None,
+        };
+        let m = Message {
+            id: "t-to-m1".into(),
+            thread_id: "t-to".into(),
+            from: "you@x.test".into(),
+            from_name: "You".into(),
+            to: vec!["Maya <maya@x.test>".into()],
+            cc: vec![],
+            subject: "Intro thread".into(),
+            snippet: String::new(),
+            body_text: "hi both".into(),
+            body_html: None,
+            date: 2_000,
+            unread: false,
+            attachments: vec![],
+        };
+        upsert_thread(&conn, ACCT, &t, &[(m, None, None, None, vec![])]).unwrap();
+
+        let plan = crate::search::SearchPlan { people: vec!["maya".into()], ..Default::default() };
+        let hits = search_planned(&conn, &plan, ACCT).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].thread_id, "t-from");
+        assert_eq!(hits[1].thread_id, "t-to");
+    }
+
+    #[test]
+    fn date_window_narrows_term_search() {
+        let conn = open(std::path::Path::new(":memory:")).unwrap();
+        seed(&conn, "t-mar", "Invoice March", "amount due", "Ann", 3_000);
+        seed(&conn, "t-apr", "Invoice April", "amount due", "Ann", 5_000);
+        let plan = crate::search::SearchPlan {
+            terms: vec!["invoice".into()],
+            after: Some(4_000),
+            ..Default::default()
+        };
+        let hits = search_planned(&conn, &plan, ACCT).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].thread_id, "t-apr");
+    }
+
+    #[test]
+    fn operator_query_routes_through_search() {
+        let conn = open(std::path::Path::new(":memory:")).unwrap();
+        seed(&conn, "t-maya", "Deck feedback", "notes attached", "Maya", 1_000);
+        seed(&conn, "t-ann", "Deck outline", "first cut", "Ann", 2_000);
+        // The old sanitizer degenerated "from:maya" into the term "frommaya"
+        // (zero hits); the operator-aware parse must route it as a person.
+        let hits = search(&conn, "from:maya deck", ACCT).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].thread_id, "t-maya");
+    }
+}

@@ -1,18 +1,20 @@
 //! Pulls Gmail state into SQLite. The DB is the single source of truth for
 //! the UI; sync reconciles it with the server.
 //!
-//! Two paths:
+//! Three paths:
 //! - **incremental** (normal): users.history.list since the stored per-account
 //!   historyId — cheap, catches changes to any thread, no listing caps.
 //! - **reconcile** (first sync / expired historyId): paged thread listings
 //!   (inbox up to 500, recent archived up to 200) diffed by per-thread
 //!   historyId, then the new baseline historyId is stored.
+//! - **crawl** (background): resumable full-history walk that fetches and
+//!   FTS-indexes every thread past the backfill caps, one page per beat.
 use crate::mail::gmail::{parse_gmail_message, GmailSession};
 use crate::store;
 use crate::types::*;
 use rusqlite::Connection;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const INBOX_BACKFILL: usize = 500;
 const DONE_BACKFILL: usize = 200;
@@ -395,4 +397,247 @@ pub fn thread_from_json(id: &str, v: &Value, in_inbox: bool) -> (Thread, Vec<sto
         snoozed_until: None,
     };
     (thread, msgs)
+}
+
+// ------------------------------------------------------------------ crawl
+//
+// Background full-history search indexing. reconcile() caps its listings, so
+// mail older than the caps never entered mail_fts and the first search for it
+// paid a live Gmail round-trip. The crawl walks the whole mailbox once,
+// newest to oldest, one listing page per beat, fetching + indexing whatever
+// isn't local yet. The cursor lives in kv so the walk survives restarts, and
+// re-anchors with before: when a persisted page token expires. Once done,
+// incremental sync keeps the index current — done is terminal.
+
+/// Gmail's default search scope (no spam/trash), minus drafts — the same
+/// population local search exposes (`hidden IS NULL`, reconcile skips drafts).
+const CRAWL_QUERY: &str = "-in:spam -in:trash -in:draft";
+/// Pause between thread fetches: ≤5 req/s keeps a crawling account far under
+/// Gmail's per-user quota (threads.get = 10 units of 15,000/min).
+const CRAWL_THROTTLE_MS: u64 = 200;
+/// Re-anchor overlap: a day of re-listed (and then history_id-skipped)
+/// threads absorbs before:'s coarse granularity at the boundary.
+const ANCHOR_OVERLAP_SECS: i64 = 86_400;
+
+fn crawl_key(account_id: &str) -> String {
+    format!("crawl:{account_id}")
+}
+
+/// Persisted crawl position (kv: crawl:<account>).
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default, Debug, PartialEq)]
+pub struct CrawlCursor {
+    /// Next listing page. None at the start of a (re-)listing.
+    #[serde(default)]
+    pub page_token: Option<String>,
+    /// Unix seconds the current listing is anchored at (`before:anchor`);
+    /// None = listing from the newest thread.
+    #[serde(default)]
+    pub anchor: Option<i64>,
+    /// Oldest thread date (ms) seen so far — the next anchor if the page
+    /// token expires.
+    #[serde(default)]
+    pub oldest_ms: Option<i64>,
+    /// Threads fetched + indexed by the crawl (progress logging).
+    #[serde(default)]
+    pub indexed: u64,
+    /// Whole history walked; nothing left to do.
+    #[serde(default)]
+    pub done: bool,
+}
+
+fn crawl_query(anchor: Option<i64>) -> String {
+    match anchor {
+        Some(secs) => format!("{CRAWL_QUERY} before:{secs}"),
+        None => CRAWL_QUERY.to_string(),
+    }
+}
+
+/// A dead page token can't be resumed — restart the listing just past the
+/// oldest indexed thread (or from the top if nothing was indexed yet).
+fn reanchor(cur: &mut CrawlCursor) {
+    cur.page_token = None;
+    cur.anchor = cur.oldest_ms.map(|ms| ms / 1000 + ANCHOR_OVERLAP_SECS);
+}
+
+/// What one crawl beat did, for the caller's log line.
+pub struct CrawlBeat {
+    pub fetched: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub total_indexed: u64,
+    pub done: bool,
+}
+
+/// One beat of the crawl: process a single listing page (≤100 threads), then
+/// persist the advanced cursor. Locks the session map per call — never across
+/// the whole beat — so user-triggered Gmail traffic interleaves with a crawl.
+pub async fn crawl_step(
+    http: &reqwest::Client,
+    gmail: &tokio::sync::Mutex<HashMap<String, GmailSession>>,
+    db: &std::sync::Mutex<Connection>,
+    account_id: &str,
+) -> Result<CrawlBeat, String> {
+    let key = crawl_key(account_id);
+    let mut cur: CrawlCursor = {
+        let conn = db.lock().unwrap();
+        store::get_json(&conn, &key).unwrap_or_default()
+    };
+    if cur.done {
+        return Ok(CrawlBeat {
+            fetched: 0,
+            skipped: 0,
+            failed: 0,
+            total_indexed: cur.indexed,
+            done: true,
+        });
+    }
+
+    let query = crawl_query(cur.anchor);
+    let listed = {
+        let mut sessions = gmail.lock().await;
+        let Some(session) = sessions.get_mut(account_id) else {
+            return Err("account disconnected".into());
+        };
+        session.list_threads_page(http, &query, cur.page_token.as_deref()).await
+    };
+    let (page, next) = match listed {
+        Ok(v) => v,
+        // Gmail 400s a stale page token; retrying it is hopeless. Re-anchor
+        // and continue from the oldest indexed thread on the next beat.
+        Err(e) if e.contains("(400") && cur.page_token.is_some() => {
+            reanchor(&mut cur);
+            let conn = db.lock().unwrap();
+            store::set_json(&conn, &key, &cur)?;
+            return Err(format!(
+                "page token expired; re-anchored at before:{:?}",
+                cur.anchor
+            ));
+        }
+        Err(e) => return Err(e), // transient — same cursor retries next beat
+    };
+
+    let mut beat = CrawlBeat {
+        fetched: 0,
+        skipped: 0,
+        failed: 0,
+        total_indexed: cur.indexed,
+        done: false,
+    };
+    let mut page_oldest: Option<i64> = None;
+    for (id, history_id) in &page {
+        let known: Option<String> = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT COALESCE(history_id, '') FROM threads WHERE id = ?1",
+                [id.as_str()],
+                |r| r.get(0),
+            )
+            .ok()
+        };
+        if known.as_deref() == Some(history_id.as_str()) {
+            beat.skipped += 1;
+        } else {
+            let fetched = {
+                let mut sessions = gmail.lock().await;
+                let Some(session) = sessions.get_mut(account_id) else {
+                    return Err("account disconnected mid-beat".into());
+                };
+                refetch_thread(http, session, db, account_id, id).await
+            };
+            match fetched {
+                Ok(_) => beat.fetched += 1,
+                // One bad thread must not wedge the walk — log it and move
+                // on; the live search_all path can still surface it.
+                Err(e) => {
+                    beat.failed += 1;
+                    eprintln!("[crawl:{account_id}] deferred {id}: {e}");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(CRAWL_THROTTLE_MS)).await;
+        }
+        let date: Option<i64> = {
+            let conn = db.lock().unwrap();
+            conn.query_row("SELECT last_date FROM threads WHERE id = ?1", [id.as_str()], |r| {
+                r.get(0)
+            })
+            .ok()
+        };
+        if let Some(d) = date {
+            page_oldest = Some(page_oldest.map_or(d, |o| o.min(d)));
+        }
+    }
+
+    // Every fetch failing looks like an outage, not poison threads — keep the
+    // cursor unchanged so the same page retries instead of holing the index.
+    if beat.fetched == 0 && beat.failed > 0 {
+        return Err(format!("all {} fetches failed; page will retry", beat.failed));
+    }
+
+    if let Some(d) = page_oldest {
+        cur.oldest_ms = Some(cur.oldest_ms.map_or(d, |o| o.min(d)));
+    }
+    cur.indexed += beat.fetched as u64;
+    cur.page_token = next;
+    if cur.page_token.is_none() {
+        cur.done = true; // listing exhausted: full history is indexed
+    }
+    beat.total_indexed = cur.indexed;
+    beat.done = cur.done;
+    {
+        let conn = db.lock().unwrap();
+        store::set_json(&conn, &key, &cur)?;
+    }
+    Ok(beat)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crawl_query_anchors_with_before() {
+        assert_eq!(crawl_query(None), "-in:spam -in:trash -in:draft");
+        assert_eq!(
+            crawl_query(Some(1_700_000_000)),
+            "-in:spam -in:trash -in:draft before:1700000000"
+        );
+    }
+
+    #[test]
+    fn crawl_cursor_roundtrips_through_kv() {
+        let conn = store::open(std::path::Path::new(":memory:")).unwrap();
+        let cur = CrawlCursor {
+            page_token: Some("tok123".into()),
+            anchor: Some(1_700_000_000),
+            oldest_ms: Some(1_699_999_999_000),
+            indexed: 4200,
+            done: false,
+        };
+        store::set_json(&conn, &crawl_key("a@b.c"), &cur).unwrap();
+        let back: CrawlCursor = store::get_json(&conn, &crawl_key("a@b.c")).unwrap();
+        assert_eq!(back, cur);
+        // a fresh account has no cursor row → the crawl starts from default
+        let missing: Option<CrawlCursor> = store::get_json(&conn, &crawl_key("new@b.c"));
+        assert!(missing.is_none());
+    }
+
+    #[test]
+    fn reanchor_restarts_past_oldest_indexed() {
+        let mut cur = CrawlCursor {
+            page_token: Some("stale".into()),
+            anchor: None,
+            oldest_ms: Some(1_699_999_999_123),
+            indexed: 7,
+            done: false,
+        };
+        reanchor(&mut cur);
+        assert_eq!(cur.page_token, None);
+        assert_eq!(cur.anchor, Some(1_699_999_999 + ANCHOR_OVERLAP_SECS));
+
+        // token expired before anything was indexed → restart from the top
+        let mut fresh = CrawlCursor { page_token: Some("stale".into()), ..Default::default() };
+        reanchor(&mut fresh);
+        assert_eq!(fresh.anchor, None);
+        assert_eq!(fresh.page_token, None);
+    }
 }
