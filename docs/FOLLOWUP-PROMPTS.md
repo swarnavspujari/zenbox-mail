@@ -12,7 +12,8 @@ Routing at a glance:
 
 | Bug | Task | Model | Effort |
 |-----|------|-------|--------|
-| 5 | Search: full-history index + ranking + natural-language | **Fable 5** | `xhigh` |
+| 5 | Search: full-history index + ranking + natural-language | **Fable 5** | `xhigh` | ✅ **shipped to `main` 2026-07-09** |
+| 5·P4 | Search: semantic / vector tier (hybrid with bm25) | **Fable 5** | `xhigh` | prompt below |
 | 6 | Remind-me natural-language parsing + timezone abbrev | **Opus 4.8** | `high` |
 | 7B | Calendar event create as a side panel (not a popup) | **Opus 4.8** | `xhigh` |
 | 12 | Auto Google Meet on invites with guests | **Opus 4.8** | `high` |
@@ -27,6 +28,14 @@ mock `src/lib/mock.ts` and Rust demo `src-tauri/src/mail/mock.rs` must mirror ev
 ---
 
 ## Bug 5 — Search: full-history index, relevance ranking, natural-language queries
+
+> **STATUS — shipped to `main` 2026-07-09 (Phases 1–3).** Background crawler
+> (`sync.rs` `crawl_step`, kv cursor `crawl:{email}`), weighted-bm25 ranking
+> (`store::search` via a MATERIALIZED CTE), and the operator-aware NL planner
+> (`src-tauri/src/search.rs`, `ai::complete` + deterministic fallback) are live.
+> The file/line refs in the prompt below are pre-change and kept for history.
+> **Owner E2E still pending:** live crawl on a real account + AI parse with a
+> keyed provider. The deferred semantic tier is now **Phase 4**, below.
 
 **Model: Claude Fable 5 · effort `xhigh`.** This is the hardest item — a new subsystem spanning
 the Rust core (SQLite/FTS5), a background full-history crawler, a ranking change, and a
@@ -231,3 +240,102 @@ and it's a fragile heuristic — treat it as opt-in polish, not a bug fix:
 > body heading is worse than the duplicate. Add fixtures (a subject-echoing newsletter and a normal
 > email whose body legitimately repeats a heading) and confirm the normal email is untouched.
 > Report the false-positive risk honestly; if it can't be made safe, recommend leaving it as-is.
+
+---
+
+## Phase 4 — Semantic / vector search (the deferred tier, now scheduled)
+
+**Model: Claude Fable 5 · effort `xhigh`.** Genuinely hard, novel-integration, long-horizon: a
+new native dependency (an embedded vector store), a local embedding runtime, a DB migration, a
+background embedding backfill, and hybrid-ranking math — with mock parity on both backends. That's
+route-up work. *Opus 4.8 fallback:* enable adaptive thinking, `xhigh`; it can do this but will
+lean toward reasoning over spawning helper agents, so say so if you want parallel exploration.
+
+**Branch/worktree:** build on a dedicated branch, e.g. `search-phase4-semantic` — it adds a native
+crate + model weights that can destabilize the build, and Phases 1–3 owner-E2E is still open, so
+keep `main` shippable. Use a **git worktree** if you want `main`'s checkout usable at the same time
+(the crawl/E2E on a real account runs there); a plain branch is fine if you don't multitask.
+
+**Runtime model routing (what Fission ships/calls — separate from the model that builds this):**
+- **Embeddings → a small model shipped locally with the app** (384-dim class: all-MiniLM-L6-v2 or
+  bge-small-en-v1.5, via a Rust ONNX runtime). This is the "small model to ship with Fission" worth
+  bundling — an *embedding* model, not a generative one. It keeps mail on-device, works offline, and
+  avoids paying an API to embed a whole mailbox. Embeddings are computed once in the background and
+  cached; only the query is embedded live (one tiny CPU inference).
+- **NL query parse (Phase 3, already built) → a small, fast *hosted* model** (Haiku 4.5 class, a
+  small NIM model, or a `gpt-4o-mini`-equivalent) through the existing `ai::complete`, with the
+  deterministic fallback already in place. **Don't** ship a local *generative* LLM — it's large and
+  compute-heavy and would defeat the "fast, non-compute-heavy" goal.
+- **Anthropic has no embeddings API.** If you choose the remote-embedding option instead of the
+  local model, it's OpenAI (`text-embedding-3-small`) or a NIM embedding model — never Claude. An
+  Anthropic key is only useful for the *parse*, not the vectors.
+
+**Before the session, procure whichever you pick:** (a) nothing but disk, if going local — the
+session downloads/bundles the weights from Hugging Face (~25–90 MB depending on quantization); or
+(b) an OpenAI or NIM embedding key, if going remote. Optionally a small fast chat key for the NL
+parse (Haiku/NIM/mini) — search still works without it via the deterministic fallback.
+
+**Why not Typesense (still):** `sqlite-vec` gives the embedded vector capability Typesense would
+have, without a server, a listening port, a RAM-resident duplicate of the mailbox, or the missing
+native Windows binary. Typesense only becomes the right tool if Fission grows a multi-user,
+server-backed dimension (team/shared-inbox search) — which it deliberately hasn't.
+
+Prompt:
+
+> I'm adding semantic (vector) search to Fission Mail, a Superhuman-style **local-first** Tauri
+> email client (Rust core + React/TS), because lexical search alone misses meaning: "invoice"
+> won't find "bill" or "receipt." Lexical already ships and works — a background full-history
+> crawler indexes all mail into FTS5, and `store::search` / `store::search_planned`
+> (`src-tauri/src/store/mod.rs`) rank by weighted bm25 behind a natural-language planner
+> (`src-tauri/src/search.rs`, `ai::complete` with a deterministic fallback). I want semantic recall
+> fused with that existing lexical ranking, fast and light enough to run entirely on a consumer
+> laptop.
+>
+> The architecture is decided — build it, don't re-open it:
+> - **Vector store: `sqlite-vec`** — the embedded, pure-C extension that statically links into the
+>   `rusqlite` (`bundled`) already in the tree. No server, no daemon, no port (the reason Typesense
+>   was rejected: server-only, no embedded mode, no native Windows binary). sqlite-vec IS the vector
+>   tier; do not add a search server.
+> - **Embeddings: a small local model shipped with the app** (384-dim class — all-MiniLM-L6-v2 or
+>   bge-small-en-v1.5 — via a Rust ONNX runtime). Mail must never leave the device, search must work
+>   offline, and embedding a whole mailbox through a paid API is a non-starter. Compute each
+>   message's embedding once, in the background, cached in sqlite-vec; the query embedding is a
+>   single small CPU inference per search. Add an optional "use a remote embedding provider" setting
+>   for users who'd rather not ship weights — but note **Anthropic has no embeddings API**, so that
+>   path is OpenAI (`text-embedding-3-small`) or a NIM embedding model, never Claude.
+> - **Retrieval: hybrid.** Fuse the existing bm25 lexical ranking with vector cosine via Reciprocal
+>   Rank Fusion, so exact-term precision and semantic recall combine rather than one replacing the
+>   other.
+>
+> Step 0 — before writing code, verify the current landscape (don't trust versions from memory):
+> confirm how to load `sqlite-vec` into `rusqlite` `bundled` today, and choose the embedding runtime
+> by checking what's current and lightest — `fastembed-rs` (bundled/quantized ONNX, auto-download)
+> vs `ort` vs `candle`. Report the model's on-disk size, its dimensions, and the added binary weight
+> before committing to one.
+>
+> Then build in phases; after each, verify with `cargo check` / `cargo test`, direct SQLite
+> inspection, and the browser demo (`npm run dev`):
+> 1. **Vector store + migration.** Load sqlite-vec; add a `mail_vec` table keyed by message (and
+>    thread) holding the embedding, guarded like the other migrations in `store::open`. Verify a
+>    hand-inserted vector KNN-queries back.
+> 2. **Embedding pipeline.** Embed message bodies in the background — extend the existing crawler
+>    beat (`crawl_step` in `sync.rs`) and the new-mail path so it backfills existing mail and keeps
+>    up incrementally, throttled and batched so it never blocks the UI. Cache in sqlite-vec keyed by
+>    message id; skip already-embedded rows. Verify the embedded-row count converges to the message
+>    count on a seeded DB.
+> 3. **Hybrid retrieval.** In `store::search_planned`'s term route, compute the query embedding once,
+>    KNN sqlite-vec, and fuse with the bm25 candidate list by Reciprocal Rank Fusion; keep the
+>    people/date narrowing and the deterministic+lexical fallback fully working when the model or
+>    embeddings are absent. Verify a synonym query that lexical-only misses (seed a "bill"/"receipt"
+>    body, search "invoice") now surfaces it, and that plain exact-term queries don't regress.
+> 4. **Mock parity.** Give `src/lib/mock.ts` (and `src-tauri/src/mail/mock.rs` where it seeds) a
+>    simple semantic stand-in — a small hand-curated synonym map or precomputed vectors over the demo
+>    fixtures — so the browser and Rust demos show semantic recall without the model runtime.
+>
+> Guardrails: comprehensive yet non-compute-heavy — small model, embeddings computed once and cached
+> (never per keystroke), on-disk ANN (don't hold the whole index in RAM), one query inference per
+> search. Change only what search needs; no unrelated refactors. Lexical search must degrade
+> gracefully to exactly today's behavior when the model or embeddings aren't available — semantic is
+> additive, never a hard dependency. If a phase turns out riskier or heavier than it looked (binary
+> bloat, backfill time, ANN recall quality), say so and recommend rather than pushing through. When
+> you have enough to act, act — a recommendation, not a survey.
