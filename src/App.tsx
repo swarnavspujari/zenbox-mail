@@ -97,7 +97,14 @@ export default function App() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const debouncedRefresh = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => void useMail.getState().refresh(), 400);
+      timer = setTimeout(() => {
+        void useMail.getState().refresh();
+        // Keep the OPEN thread fresh too: a queued reply that just flushed (or
+        // new inbound) lands here, so an optimistic "Sending…" row reconciles
+        // against the real message with no duplicate and no manual reopen.
+        if (useMail.getState().openThreadId)
+          void useMail.getState().refreshOpenThread();
+      }, 400);
     };
     const unMail = backend.onMailUpdated(debouncedRefresh);
     // inline images for the open thread resolved in the background — re-read it

@@ -11,6 +11,7 @@ import { ContactPanel } from "@/components/ContactPanel";
 import { Label } from "@/components/Label";
 import { InviteBar } from "@/features/thread/InviteBar";
 import { ReplyDock } from "@/features/compose/ReplyDock";
+import type { PendingMessage } from "@/lib/pending";
 import type { Attachment, Message } from "@/lib/types";
 
 function fmtSize(bytes: number): string {
@@ -315,6 +316,52 @@ function MessageCard({
   );
 }
 
+/**
+ * An optimistic reply the user just sent, docked at the bottom of the thread
+ * before the backend confirms it (Superhuman-style). "Sending…" during the
+ * Undo Send window; a real timestamp once it leaves. Reconciled away against
+ * the real message on the next fetch (see @/lib/pending), so it never lingers.
+ */
+function PendingCard({ p }: { p: PendingMessage }) {
+  return (
+    <div className="zb-fade-in overflow-hidden rounded-[10px] border border-line bg-raised">
+      <div className="flex w-full items-center gap-3 px-[18px] py-3 text-left">
+        <Avatar name={p.fromName} email={p.from} size={34} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="font-semibold text-ink">{p.fromName}</span>
+            <span className="truncate text-[12px] text-ink-3">{p.from}</span>
+          </div>
+          <div className="truncate text-[12px] text-ink-3">
+            to {p.to.join(", ")}
+            {p.cc.length > 0 && <> · cc {p.cc.join(", ")}</>}
+          </div>
+        </div>
+        <span className="shrink-0 text-[12px]">
+          {p.status === "sending" ? (
+            <span className="flex items-center gap-1.5 text-accent-strong">
+              <span className="zb-spin inline-block h-3 w-3 rounded-full border-2 border-line-strong border-t-accent" />
+              Sending…
+            </span>
+          ) : (
+            <span className="text-ink-3">{fmtWhen(p.sentAt ?? p.createdAt)}</span>
+          )}
+        </span>
+      </div>
+      {p.bodyHtml ? (
+        <div
+          className="selectable px-[18px] pb-4 pt-1 text-[14px] leading-[1.65] text-ink [&_a]:text-accent-strong [&_p]:my-1"
+          dangerouslySetInnerHTML={{ __html: p.bodyHtml }}
+        />
+      ) : (
+        <div className="selectable whitespace-pre-wrap px-[18px] pb-4 pt-1 text-[14px] leading-[1.65] text-ink">
+          {p.bodyText}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InstantReplies() {
   const suggestions = useUi((s) => s.suggestions);
   const idx = useUi((s) => s.suggestionIndex);
@@ -362,12 +409,16 @@ function InstantReplies() {
 export function ThreadView() {
   const messages = useMail((s) => s.openMessages);
   const threadId = useMail((s) => s.openThreadId);
+  const pendingAll = useMail((s) => s.pendingMessages);
   const myEmail = useSettings((s) => s.accounts.active);
   const compose = useUi((s) => s.compose);
   // A reply/forward for THIS thread docks its composer inline at the bottom
   // (new-message compose stays the modal); Instant Replies hide while it's open.
   const replyingHere =
     !!compose && compose.threadId === threadId && compose.mode !== "new";
+  // Optimistic sent replies for this thread (Superhuman-style "Sending…" rows),
+  // appended after the real messages until they reconcile away.
+  const pendingHere = pendingAll.filter((p) => p.threadId === threadId);
   // Superhuman-style: older messages collapse; the last (and any unread)
   // stay open. User toggles override until the thread changes.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
@@ -476,6 +527,14 @@ export function ThreadView() {
     scroller.scrollTop = Math.max(0, top - 12);
   }, [threadId, messages.length]);
 
+  // A just-sent optimistic reply appears at the bottom — scroll it into view
+  // (the dock that was here is gone, so nothing else moves the pane down).
+  useEffect(() => {
+    if (pendingHere.length === 0) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [pendingHere.length]);
+
   // Fetch instant-reply suggestions for the open thread.
   useEffect(() => {
     useUi.getState().setSuggestions([]);
@@ -544,7 +603,8 @@ export function ThreadView() {
                 {subject}
               </h1>
               <div className="selectable mt-1 text-[12px] text-ink-3">
-                {messages.length} message{messages.length > 1 ? "s" : ""}
+                {messages.length + pendingHere.length} message
+                {messages.length + pendingHere.length > 1 ? "s" : ""}
               </div>
             </div>
             <InviteBar threadId={threadId} />
@@ -564,6 +624,9 @@ export function ThreadView() {
                     setOverrides((o) => ({ ...o, [m.id]: !isExpanded(m, i) }));
                   }}
                 />
+              ))}
+              {pendingHere.map((p) => (
+                <PendingCard key={p.localId} p={p} />
               ))}
             </div>
             {/* Threaded inline in the conversation column at the email's width. */}

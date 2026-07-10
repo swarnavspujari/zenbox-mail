@@ -1,11 +1,15 @@
 import { create } from "zustand";
 import { backend, type MailView } from "@/lib/ipc";
 import { assignSplit } from "@/lib/mock";
+import { reconcilePendingMessages, type PendingMessage } from "@/lib/pending";
 import { useSettings } from "./settings";
 import type { Message, SearchResult, Thread, ThreadId } from "@/lib/types";
 
 // Guards against a slow full-history search landing after the query moved on.
 let lastSearchQuery = "";
+
+// Monotonic id for optimistic reply rows (pending-1, pending-2, …).
+let pendingSeq = 1;
 
 interface MailState {
   loaded: boolean;
@@ -25,6 +29,10 @@ interface MailState {
 
   openThreadId: ThreadId | null;
   openMessages: Message[];
+  /** Optimistic sent replies for the open thread, shown at the bottom until
+   *  the real message lands (see @/lib/pending). Keyed by threadId so they
+   *  survive navigating away and back mid-send. */
+  pendingMessages: PendingMessage[];
 
   searchResults: SearchResult[];
   /** A live full-history search is still filling in behind the local results. */
@@ -48,6 +56,12 @@ interface MailState {
   /** Re-read the open thread's messages (e.g. when inline images resolve). */
   refreshOpenThread: () => Promise<void>;
   closeThread: () => void;
+  /** Append an optimistic reply row; returns its localId. */
+  addPendingMessage: (pm: Omit<PendingMessage, "localId" | "createdAt">) => string;
+  /** Flip a pending reply to sent with its real send time. */
+  markPendingSent: (localId: string, sentAt: number) => void;
+  /** Drop a pending reply (Undo Send pulled it back to a draft). */
+  removePendingMessage: (localId: string) => void;
 
   archive: (id: ThreadId) => Promise<void>;
   hide: (id: ThreadId, reason: "trash" | "spam") => Promise<void>;
@@ -98,6 +112,7 @@ export const useMail = create<MailState>((set, get) => ({
   selectedIds: new Set<ThreadId>(),
   openThreadId: null,
   openMessages: [],
+  pendingMessages: [],
   searchResults: [],
   searchingMore: false,
   loadingOlder: false,
@@ -193,6 +208,9 @@ export const useMail = create<MailState>((set, get) => ({
     if (get().openThreadId !== id) return; // user already moved on
     set((s) => ({
       openMessages: msgs,
+      // A reply the user just sent is reconciled away once its real row is in
+      // the fetched list (no duplicate); still-in-flight ones stay appended.
+      pendingMessages: reconcilePendingMessages(s.pendingMessages, id, msgs.length),
       // reading clears unread locally
       inbox: s.inbox.map((t) => (t.id === id ? { ...t, unread: false } : t)),
       done: s.done.map((t) => (t.id === id ? { ...t, unread: false } : t)),
@@ -202,7 +220,15 @@ export const useMail = create<MailState>((set, get) => ({
       void backend
         .refetchMessageBody(id)
         .then((healed) => {
-          if (get().openThreadId === id) set({ openMessages: healed });
+          if (get().openThreadId === id)
+            set((s) => ({
+              openMessages: healed,
+              pendingMessages: reconcilePendingMessages(
+                s.pendingMessages,
+                id,
+                healed.length
+              ),
+            }));
         })
         .catch(() => {});
     }
@@ -213,10 +239,34 @@ export const useMail = create<MailState>((set, get) => ({
     if (!id) return;
     const msgs = await backend.getThread(id);
     // only apply if the user is still on this thread
-    if (get().openThreadId === id) set({ openMessages: msgs });
+    if (get().openThreadId === id)
+      set((s) => ({
+        openMessages: msgs,
+        pendingMessages: reconcilePendingMessages(s.pendingMessages, id, msgs.length),
+      }));
   },
 
   closeThread: () => set({ openThreadId: null, openMessages: [] }),
+
+  addPendingMessage: (pm) => {
+    const localId = `pending-${pendingSeq++}`;
+    set((s) => ({
+      pendingMessages: [...s.pendingMessages, { ...pm, localId, createdAt: Date.now() }],
+    }));
+    return localId;
+  },
+
+  markPendingSent: (localId, sentAt) =>
+    set((s) => ({
+      pendingMessages: s.pendingMessages.map((p) =>
+        p.localId === localId ? { ...p, status: "sent", sentAt } : p
+      ),
+    })),
+
+  removePendingMessage: (localId) =>
+    set((s) => ({
+      pendingMessages: s.pendingMessages.filter((p) => p.localId !== localId),
+    })),
 
   // Triage actions move the thread locally (optimistic) and fire the backend
   // without a trailing refresh() — that was 4 IPC round-trips per keystroke and

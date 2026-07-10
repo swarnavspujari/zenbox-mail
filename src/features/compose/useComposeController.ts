@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import { backend } from "@/lib/ipc";
 import { pushTriageUndo } from "@/lib/commands";
 import { pushUndo } from "@/lib/undo";
+import { sanitizeUserHtml } from "@/lib/sanitize";
 import { useMail } from "@/stores/mail";
 import { activeCapabilities, useSettings } from "@/stores/settings";
 import {
@@ -27,6 +28,12 @@ function splitAddresses(raw: string): string[] {
     .split(/[,;]/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** Plain-text of the user's message, for the optimistic row's snippet fallback
+ *  (the card renders the HTML; this is only used when there's no HTML). */
+function plainMessageText(html: string): string {
+  return new DOMParser().parseFromString(html, "text/html").body.textContent?.trim() ?? "";
 }
 
 function readFileB64(file: File): Promise<MailAttachment> {
@@ -241,12 +248,44 @@ export function useComposeController() {
       }
       setSending(true);
       setError(null);
+      // The optimistic reply row (if any) so error/undo paths can retract it.
+      let pendingLocalId: string | null = null;
+      let flipTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         const outgoing = outgoingFromCompose(c);
         if (!(await shareDriveLinks(c, outgoing))) {
           setSending(false);
           return; // user cancelled the share dialog = cancelled the send
         }
+
+        // Optimistic reply: append the message to the OPEN thread now, so it
+        // shows at the bottom instantly (Superhuman-style). Scoped to a
+        // reply/forward into the thread being read (the inline dock path) — the
+        // new-message modal and list-only replies never dock here. Reconciled
+        // away against the real message on the next getThread / mail:updated.
+        const optimistic =
+          !!c.threadId &&
+          c.mode !== "new" &&
+          useMail.getState().openThreadId === c.threadId;
+        const appendPending = (
+          status: "sending" | "sent",
+          sentAt: number | null,
+          outboxId: number | null
+        ) =>
+          useMail.getState().addPendingMessage({
+            threadId: c.threadId!,
+            from: useSettings.getState().accounts.active ?? "",
+            fromName: "You",
+            to,
+            cc: splitAddresses(c.cc),
+            subject: c.subject || "(no subject)",
+            bodyHtml: sanitizeUserHtml(c.body).trim() || null,
+            bodyText: plainMessageText(c.body),
+            status,
+            sentAt,
+            outboxId,
+            baselineCount: useMail.getState().openMessages.length,
+          });
 
         // "Send & mark done": archive the thread + register its own triage undo.
         // Returns whether it ran, so the notification can say "& marked done".
@@ -263,9 +302,12 @@ export function useComposeController() {
 
         if (undoMs === 0) {
           // Undo Send off: deliver immediately, no window, nothing to undo.
-          await backend.sendMailNow(outgoing);
           if (c.draftId !== null) void backend.deleteDraft(c.draftId).catch(() => {});
           useUi.getState().closeCompose();
+          if (optimistic) pendingLocalId = appendPending("sending", null, null);
+          await backend.sendMailNow(outgoing);
+          if (pendingLocalId)
+            useMail.getState().markPendingSent(pendingLocalId, Date.now());
           const done = await runMarkDone();
           useUi.getState().showToast(done ? "Sent & marked done" : "Sent");
         } else {
@@ -275,6 +317,18 @@ export function useComposeController() {
           if (c.draftId !== null) void backend.deleteDraft(c.draftId).catch(() => {});
           const saved = { ...c, draftId: null };
           useUi.getState().closeCompose();
+          if (optimistic) {
+            pendingLocalId = appendPending("sending", null, outboxId);
+            const id = pendingLocalId;
+            // Flip "Sending…" → sent with a real timestamp when the window ends
+            // (the flush's mail:updated then reconciles it against the real row).
+            flipTimer = setTimeout(
+              () => useMail.getState().markPendingSent(id, Date.now()),
+              undoMs
+            );
+          }
+          const localId = pendingLocalId;
+          const timer = flipTimer;
           pushUndo({
             // Match the bar + the actual send time exactly — a shorter buffer
             // left a dead second where Z skipped this entry and undid an older
@@ -285,9 +339,15 @@ export function useComposeController() {
             run: async () => {
               try {
                 await backend.cancelOutbox(outboxId);
+                // Retract the optimistic row; the draft comes back below.
+                if (localId) {
+                  clearTimeout(timer);
+                  useMail.getState().removePendingMessage(localId);
+                }
                 useUi.getState().startCompose(saved);
                 useUi.getState().showToast("Send undone — draft restored");
               } catch {
+                // Already flushed — leave the row; reconcile swaps in the real one.
                 useUi.getState().showToast("Too late — already sent");
               }
               useUi.getState().clearPendingSend();
@@ -302,6 +362,11 @@ export function useComposeController() {
         }
         await useMail.getState().refresh();
       } catch (e) {
+        // Send failed before it left — retract the optimistic row.
+        if (pendingLocalId) {
+          clearTimeout(flipTimer);
+          useMail.getState().removePendingMessage(pendingLocalId);
+        }
         setError(String(e));
       } finally {
         setSending(false);

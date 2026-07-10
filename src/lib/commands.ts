@@ -811,6 +811,21 @@ export function allCommands(): Command[] {
       when: () => inCompose(),
       run: () => ui().openPicker("drivePicker"),
     },
+    {
+      // Throw the draft away (the 🗑 button routes here too). Distinct from Esc,
+      // which KEEPS a draft with content — this always deletes and closes.
+      id: "compose.discard",
+      title: "Discard Draft",
+      group: "Compose",
+      when: () => inCompose(),
+      run: () => {
+        const c = ui().compose;
+        if (!c) return;
+        if (c.draftId != null) void backend.deleteDraft(c.draftId).catch(() => {});
+        ui().closeCompose();
+        ui().showToast("Draft discarded");
+      },
+    },
     // New-message composer only: background the draft and open the prev/next
     // email (header ↑/↓ chevrons mirror these). Bare K/J are suppressed while a
     // field has focus, so they fire only when the caret isn't in a text input.

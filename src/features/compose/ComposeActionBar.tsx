@@ -4,9 +4,8 @@
 // hidden file <input> that backs 📎 lives here so the whole attach flow is in
 // one place. 📎 opens a two-item flyout: local files or Google Drive.
 import { useEffect, useRef, useState } from "react";
-import { backend } from "@/lib/ipc";
 import { formatKeyExpr } from "@/lib/keyboard";
-import { shortcutHint } from "@/lib/commands";
+import { runCommandById, shortcutHint } from "@/lib/commands";
 import { useUi } from "@/stores/ui";
 
 /** 📎 → a small upward flyout: attach local files, or open the Drive picker. */
@@ -128,20 +127,13 @@ export function ComposeActionBar({
         }}
       />
       <button
-        onClick={() => {
-          const c = useUi.getState().compose;
-          if (c?.draftId != null) void backend.deleteDraft(c.draftId).catch(() => {});
-          useUi.getState().closeCompose();
-        }}
+        onClick={() => runCommandById("compose.discard")}
         className="rounded px-1.5 py-1 text-[13px] text-ink-3 hover:text-bad"
-        title="Discard draft"
+        title={`Discard draft (${formatKeyExpr(shortcutHint("compose.discard"))})`}
       >
         🗑
       </button>
-      <span className="ml-1 text-[11px] text-ink-3">
-        <span className="kbd">{formatKeyExpr(shortcutHint("compose.send"))}</span> send
-      </span>
-      {error && <span className="text-[12px] text-bad">{error}</span>}
+      {error && <span className="ml-1 text-[12px] text-bad">{error}</span>}
     </div>
   );
 }

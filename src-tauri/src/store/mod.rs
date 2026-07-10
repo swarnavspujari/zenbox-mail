@@ -354,6 +354,9 @@ pub fn default_settings() -> Settings {
         ("compose.expandSubject", "mod+shift+s"),
         // D = Drive (v0.15). Superhuman has no equivalent key.
         ("compose.attachDrive", "mod+shift+d"),
+        // Discard the draft. Shift+"," is "<" in KeyboardEvent.key, so the
+        // physical Ctrl+Shift+, arrives as "mod+<"; "mod+shift+," is the label.
+        ("compose.discard", "mod+shift+,|mod+<"),
         // New-message composer nav (v0.12) — parity with defaults.ts so the
         // desktop app binds K/J, not just the header chevrons.
         ("compose.prevEmail", "k"),

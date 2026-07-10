@@ -86,6 +86,9 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   "compose.expandSubject": "mod+shift+s",
   // D = Drive. Superhuman has no equivalent key; mod+shift+d is unclaimed.
   "compose.attachDrive": "mod+shift+d",
+  // Discard the draft. Shift+"," is "<" in KeyboardEvent.key, so the physical
+  // Ctrl+Shift+, arrives as "mod+<"; the "mod+shift+," alt is the label shown.
+  "compose.discard": "mod+shift+,|mod+<",
   // New-message composer: K/J background the draft and jump to the prev/next
   // email (the header ↑/↓ chevrons do the same). Suppressed while a field has
   // focus, so typing "j"/"k" is never hijacked.
