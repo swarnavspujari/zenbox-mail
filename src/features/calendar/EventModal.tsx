@@ -1,7 +1,9 @@
-// Create/edit event modal: title, calendar (writable only), date/time or
-// all-day, guests (contact autocomplete), location, description. Saving an
-// event with guests asks whether to email them (Google sendUpdates); an
-// If-Match 412 surfaces as a "changed elsewhere" banner with Load-latest.
+// Create/edit event side panel — docks in the right-hand slot like the
+// calendar/shortcuts panels (Superhuman-style), driven by calendar.modal:
+// title, calendar (writable only), date/time or all-day, guests (contact
+// autocomplete), location, description. Saving an event with guests asks
+// whether to email them (Google sendUpdates); an If-Match 412 surfaces as a
+// "changed elsewhere" banner with Load-latest.
 import { useEffect, useRef, useState } from "react";
 import { backend } from "@/lib/ipc";
 import { useCalendar } from "@/stores/calendar";
@@ -212,26 +214,22 @@ export function EventModal() {
   };
 
   return (
-    <div
-      className="zb-fade-in fixed inset-0 z-30 flex items-start justify-center bg-black/40 pt-[10vh]"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) useCalendar.getState().closeModal();
-      }}
-    >
-      <div className="w-[480px] max-w-[92vw] rounded-xl border border-line-strong bg-overlay p-4 shadow-2xl">
-        <div className="mb-3 flex items-center">
-          <span className="flex-1 text-[14px] font-semibold text-ink">
-            {editing ? "Edit event" : "New event"}
-          </span>
-          <button
-            className="rounded px-1.5 text-ink-3 hover:bg-hover hover:text-ink"
-            onClick={() => useCalendar.getState().closeModal()}
-            title="Close (Esc)"
-          >
-            ✕
-          </button>
-        </div>
+    <aside className="flex w-72 shrink-0 flex-col border-l border-line bg-surface 2xl:w-80">
+      <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+        <span className="flex-1 text-[14px] font-semibold text-ink">
+          {editing ? "Edit event" : "New event"}
+        </span>
+        <span className="kbd">esc</span>
+        <button
+          className="rounded px-1.5 text-[15px] leading-none text-ink-3 hover:bg-hover hover:text-ink"
+          onClick={() => useCalendar.getState().closeModal()}
+          title="Close (Esc)"
+        >
+          ×
+        </button>
+      </div>
 
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {conflict && (
           <div className="mb-3 flex items-center gap-2 rounded-md border border-warn/40 bg-warn/10 px-2.5 py-2 text-[12px] text-ink">
             <span className="flex-1">
@@ -281,36 +279,47 @@ export function EventModal() {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className={inputCls}
-            />
-            {!allDay && (
+          {/* Start/End stack vertically — five inline inputs won't fit the
+              narrow dock, unlike the old wide modal. */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="w-9 shrink-0 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+                Start
+              </span>
               <input
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className={inputCls}
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className={`${inputCls} min-w-0`}
               />
-            )}
-            <span className="shrink-0 text-[12px] text-ink-3">to</span>
-            {!allDay && (
+              {!allDay && (
+                <input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className={`${inputCls} w-[100px] shrink-0`}
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-9 shrink-0 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+                End
+              </span>
               <input
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className={inputCls}
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className={`${inputCls} min-w-0`}
               />
-            )}
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className={inputCls}
-            />
+              {!allDay && (
+                <input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className={`${inputCls} w-[100px] shrink-0`}
+                />
+              )}
+            </div>
           </div>
 
           <div>
@@ -347,13 +356,15 @@ export function EventModal() {
         </div>
 
         {error && <div className="mt-3 text-[12px] text-bad">{error}</div>}
+      </div>
 
-        <div className="mt-4 flex items-center justify-end gap-2">
-          {notifyStep ? (
-            <>
-              <span className="flex-1 text-[12.5px] text-ink-2">
-                Send invites/updates to guests?
-              </span>
+      <div className="border-t border-line px-4 py-3">
+        {notifyStep ? (
+          <div className="space-y-2">
+            <span className="block text-[12.5px] text-ink-2">
+              Send invites/updates to guests?
+            </span>
+            <div className="flex items-center justify-end gap-2">
               <button
                 className="rounded-md border border-line-strong px-3 py-1.5 text-[12.5px] text-ink-2 hover:bg-hover"
                 onClick={() => void save(notifyStep, "none")}
@@ -368,26 +379,26 @@ export function EventModal() {
               >
                 Send
               </button>
-            </>
-          ) : (
-            <>
-              <button
-                className="rounded-md border border-line-strong px-3 py-1.5 text-[12.5px] text-ink-2 hover:bg-hover"
-                onClick={() => useCalendar.getState().closeModal()}
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-on-accent hover:opacity-90 disabled:opacity-50"
-                onClick={submit}
-                disabled={saving}
-              >
-                {saving ? "Saving…" : editing ? "Save" : "Create"}
-              </button>
-            </>
-          )}
-        </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-end gap-2">
+            <button
+              className="rounded-md border border-line-strong px-3 py-1.5 text-[12.5px] text-ink-2 hover:bg-hover"
+              onClick={() => useCalendar.getState().closeModal()}
+            >
+              Cancel
+            </button>
+            <button
+              className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-on-accent hover:opacity-90 disabled:opacity-50"
+              onClick={submit}
+              disabled={saving}
+            >
+              {saving ? "Saving…" : editing ? "Save" : "Create"}
+            </button>
+          </div>
+        )}
       </div>
-    </div>
+    </aside>
   );
 }

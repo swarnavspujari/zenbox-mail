@@ -305,7 +305,6 @@ export default function App() {
         {picker === "snippet" && <SnippetPicker />}
         {picker === "drafts" && <DraftsPicker />}
         {picker === "drivePicker" && <DrivePicker />}
-        {eventModal && <EventModal key={`${eventModal.mode}-${eventModal.event?.id ?? "new"}`} />}
         {eventPopover && <EventPopover />}
         {celebration && <Celebration />}
 
@@ -318,6 +317,13 @@ export default function App() {
           </div>
         )}
       </main>
+      {/* The event editor docks in the right-hand slot (like the shortcuts /
+          calendar panels) so it stays put across the mail and calendar
+          screens — opened from a slot click/drag or B, driven by
+          calendar.modal. */}
+      {eventModal && (
+        <EventModal key={`${eventModal.mode}-${eventModal.event?.id ?? "new"}`} />
+      )}
       {shortcutsOpen && <ShortcutsPanel />}
       </div>
 
