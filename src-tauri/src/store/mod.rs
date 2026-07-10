@@ -634,6 +634,19 @@ pub fn account_of_thread(conn: &Connection, id: &str) -> Option<String> {
         .ok()
 }
 
+/// How many threads are stored locally for an account — the numerator of the
+/// "downloading mail history" progress (denominator is Gmail's threadsTotal).
+/// Counts every stored thread, hidden (trash) included, to track the crawl's
+/// coverage against the whole mailbox.
+pub fn count_threads(conn: &Connection, account_id: &str) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM threads WHERE account_id = ?1",
+        params![account_id],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
+}
+
 pub fn get_thread(conn: &Connection, id: &str) -> Option<Thread> {
     let sql = format!("SELECT {THREAD_COLS} FROM threads WHERE id = ?1");
     conn.query_row(&sql, params![id], row_to_thread).ok()

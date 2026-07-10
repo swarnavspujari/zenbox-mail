@@ -205,6 +205,7 @@ function MessageCard({
   focused,
   first,
   last,
+  healTried,
   onToggle,
 }: {
   m: Message;
@@ -213,6 +214,9 @@ function MessageCard({
   focused: boolean;
   first: boolean;
   last: boolean;
+  /** The open thread's blank-body heal round-trip has settled — so a message
+   *  that's *still* empty is genuinely unavailable, not merely mid-load. */
+  healTried: boolean;
   onToggle: () => void;
 }) {
   const [showQuote, setShowQuote] = useState(false);
@@ -283,10 +287,29 @@ function MessageCard({
           showQuote={showQuote}
         />
       ) : isEmpty ? (
-        <div className="flex items-center gap-2 px-[18px] py-3 text-[13px] italic text-ink-3">
-          <span className="zb-spin inline-block h-3 w-3 rounded-full border-2 border-line-strong border-t-accent" />
-          Loading message…
-        </div>
+        healTried ? (
+          // Heal ran and the body is still empty — genuinely unavailable (a
+          // body past even the raised hydrate cap, or a fetch that failed).
+          // Offer Gmail rather than spinning forever.
+          <div className="px-[18px] py-3 text-[13px] text-ink-3">
+            This message is too large to preview here.{" "}
+            <button
+              onClick={() =>
+                void openExternal(
+                  `https://mail.google.com/mail/u/0/#all/${m.threadId}`
+                )
+              }
+              className="text-accent-strong hover:underline"
+            >
+              Open in Gmail ↗
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-[18px] py-3 text-[13px] italic text-ink-3">
+            <span className="zb-spin inline-block h-3 w-3 rounded-full border-2 border-line-strong border-t-accent" />
+            Loading message…
+          </div>
+        )
       ) : (
         <div className="selectable whitespace-pre-wrap px-[18px] pb-4 pt-1 text-[14px] leading-[1.65] text-ink">
           {showQuote && quoted ? `${main}\n${quoted}` : main}
@@ -410,6 +433,7 @@ export function ThreadView() {
   const messages = useMail((s) => s.openMessages);
   const threadId = useMail((s) => s.openThreadId);
   const pendingAll = useMail((s) => s.pendingMessages);
+  const blankHealDone = useMail((s) => s.blankHealDone);
   const myEmail = useSettings((s) => s.accounts.active);
   const compose = useUi((s) => s.compose);
   // A reply/forward for THIS thread docks its composer inline at the bottom
@@ -618,6 +642,7 @@ export function ThreadView() {
                   focused={messages.length > 1 && i === focused}
                   first={i === 0}
                   last={i === messages.length - 1}
+                  healTried={blankHealDone}
                   onToggle={() => {
                     setFocused(i);
                     focusedRef.current = i;

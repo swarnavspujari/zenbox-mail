@@ -1476,13 +1476,54 @@ fn notify_new_mail(app: &AppHandle, since_ms: i64) {
     }
 }
 
+/// Download-progress payload for the "Downloading mail history… N%" indicator.
+/// `indexed` = threads stored locally, `total` = Gmail's threadsTotal, `done` =
+/// every connected account's history crawl has finished. Field names are single
+/// words, so they serialize identically for the TS `SyncProgress`.
+#[derive(Clone, serde::Serialize)]
+struct SyncProgress {
+    indexed: i64,
+    total: i64,
+    done: bool,
+}
+
+/// Emit `sync:progress` with the aggregate download state across connected Gmail
+/// accounts. Cheap (a COUNT + a couple kv reads per account) — safe to call from
+/// each reconcile stream beat and crawl beat. The UI hides the bar when
+/// `done`, or when `total` is 0 (threadsTotal not yet known / demo desktop).
+fn emit_sync_progress(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let (indexed, total, done) = {
+        let conn = state.db.lock().unwrap();
+        let accounts = store::get_accounts(&conn);
+        let gmail = accounts.accounts.iter().filter(|a| a.provider == "gmail");
+        let (mut indexed, mut total, mut all_done, mut any) = (0i64, 0i64, true, false);
+        for a in gmail {
+            any = true;
+            indexed += store::count_threads(&conn, &a.email);
+            total += store::get_json::<i64>(&conn, &format!("threads_total:{}", a.email)).unwrap_or(0);
+            let cur: mail::sync::CrawlCursor =
+                store::get_json(&conn, &format!("crawl:{}", a.email)).unwrap_or_default();
+            all_done &= cur.done;
+        }
+        (indexed, total, any && all_done)
+    };
+    let _ = app.emit("sync:progress", SyncProgress { indexed, total, done });
+}
+
 fn sync_in_background(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
+        // The inbox streams in live as reconcile fetches it (and the download
+        // bar climbs) rather than appearing all-at-once when sync finishes.
+        let on_progress = || {
+            let _ = app.emit("mail:updated", ());
+            emit_sync_progress(&app);
+        };
         let mut changed = false;
         let mut sessions = state.gmail.lock().await;
         for (email, session) in sessions.iter_mut() {
-            match mail::sync::full_sync(&state.http, session, &state.db, email, false).await {
+            match mail::sync::full_sync(&state.http, session, &state.db, email, false, &on_progress).await {
                 Ok(c) => changed |= c,
                 Err(e) => eprintln!("[sync:{email}] {e}"),
             }
@@ -1491,6 +1532,7 @@ fn sync_in_background(app: AppHandle) {
         if changed {
             let _ = app.emit("mail:updated", ());
         }
+        emit_sync_progress(&app);
     });
 }
 
@@ -1609,6 +1651,9 @@ fn spawn_history_crawl(app: AppHandle) {
                 }
             }
         }
+        // The crawl just advanced (or confirmed done) — refresh the download
+        // indicator so it climbs each beat and hides when the walk finishes.
+        emit_sync_progress(&app);
         state.crawl_busy.store(false, Ordering::SeqCst);
     });
 }
@@ -1619,12 +1664,17 @@ async fn sync_now(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
         let conn = state.db.lock().unwrap();
         store::wake_due_snoozes(&conn, now_ms())?;
     }
+    let on_progress = || {
+        let _ = app.emit("mail:updated", ());
+        emit_sync_progress(&app);
+    };
     let mut sessions = state.gmail.lock().await;
     for (email, session) in sessions.iter_mut() {
-        mail::sync::full_sync(&state.http, session, &state.db, email, false).await?;
+        mail::sync::full_sync(&state.http, session, &state.db, email, false, &on_progress).await?;
     }
     drop(sessions);
     let _ = app.emit("mail:updated", ());
+    emit_sync_progress(&app);
     Ok(())
 }
 
@@ -1645,13 +1695,18 @@ async fn resync_account(app: AppHandle, state: State<'_, AppState>) -> Result<()
             store::reset_history(&conn, email)?;
         }
     }
+    let on_progress = || {
+        let _ = app.emit("mail:updated", ());
+        emit_sync_progress(&app);
+    };
     let mut sessions = state.gmail.lock().await;
     for (email, session) in sessions.iter_mut() {
         // force a full reconcile — every thread re-parsed, bodies healed
-        mail::sync::full_sync(&state.http, session, &state.db, email, true).await?;
+        mail::sync::full_sync(&state.http, session, &state.db, email, true, &on_progress).await?;
     }
     drop(sessions);
     let _ = app.emit("mail:updated", ());
+    emit_sync_progress(&app);
     Ok(())
 }
 
@@ -3422,12 +3477,18 @@ pub fn run() {
             let boot = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = boot.state::<AppState>();
+                // Stream the inbox in + climb the download bar as the boot
+                // reconcile fetches, so a returning user sees mail immediately.
+                let on_progress = || {
+                    let _ = boot.emit("mail:updated", ());
+                    emit_sync_progress(&boot);
+                };
                 let mut changed = false;
                 {
                     let mut sessions = state.gmail.lock().await;
                     for (email, session) in sessions.iter_mut() {
                         if let Ok(c) =
-                            mail::sync::full_sync(&state.http, session, &state.db, email, true).await
+                            mail::sync::full_sync(&state.http, session, &state.db, email, true, &on_progress).await
                         {
                             changed |= c;
                         }
@@ -3436,6 +3497,7 @@ pub fn run() {
                 if changed {
                     let _ = boot.emit("mail:updated", ());
                 }
+                emit_sync_progress(&boot);
             });
 
             // background loop: snooze wake-ups + Gmail sync every 30s, with a
@@ -3476,9 +3538,15 @@ pub fn run() {
                         // full reconcile every 20th tick (~10 min) sweeps inbox
                         // removals the incremental path can miss.
                         let force = tick % 20 == 0;
+                        // A forced reconcile re-lists the whole inbox — stream it
+                        // in (and keep the download bar live) like the boot pass.
+                        let on_progress = || {
+                            let _ = handle.emit("mail:updated", ());
+                            emit_sync_progress(&handle);
+                        };
                         for (email, session) in sessions.iter_mut() {
                             if let Ok(c) =
-                                mail::sync::full_sync(&state.http, session, &state.db, email, force).await
+                                mail::sync::full_sync(&state.http, session, &state.db, email, force, &on_progress).await
                             {
                                 changed |= c;
                             }

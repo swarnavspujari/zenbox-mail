@@ -29,6 +29,12 @@ interface MailState {
 
   openThreadId: ThreadId | null;
   openMessages: Message[];
+  /** True once the blank-body heal round-trip for the open thread has settled
+   *  (or wasn't needed). While false, a still-empty message shows the "Loading
+   *  message…" spinner; once true, any message that's *still* empty is genuinely
+   *  unavailable (e.g. too large) and shows a terminal "Open in Gmail" instead
+   *  of spinning forever. */
+  blankHealDone: boolean;
   /** Optimistic sent replies for the open thread, shown at the bottom until
    *  the real message lands (see @/lib/pending). Keyed by threadId so they
    *  survive navigating away and back mid-send. */
@@ -112,6 +118,7 @@ export const useMail = create<MailState>((set, get) => ({
   selectedIds: new Set<ThreadId>(),
   openThreadId: null,
   openMessages: [],
+  blankHealDone: false,
   pendingMessages: [],
   searchResults: [],
   searchingMore: false,
@@ -203,9 +210,10 @@ export const useMail = create<MailState>((set, get) => ({
 
   openThread: async (id) => {
     // switch immediately so J/K feels instant; messages populate right after
-    set({ openThreadId: id, openMessages: [] });
+    set({ openThreadId: id, openMessages: [], blankHealDone: false });
     const msgs = await backend.getThread(id);
     if (get().openThreadId !== id) return; // user already moved on
+    const hasBlank = msgs.some((m) => !m.bodyHtml && !m.bodyText.trim());
     set((s) => ({
       openMessages: msgs,
       // A reply the user just sent is reconciled away once its real row is in
@@ -214,9 +222,11 @@ export const useMail = create<MailState>((set, get) => ({
       // reading clears unread locally
       inbox: s.inbox.map((t) => (t.id === id ? { ...t, unread: false } : t)),
       done: s.done.map((t) => (t.id === id ? { ...t, unread: false } : t)),
+      // nothing blank → no heal round-trip, so no spinner to resolve
+      blankHealDone: !hasBlank,
     }));
     // heal any blank-body message (large HTML behind attachmentId, frozen row…)
-    if (msgs.some((m) => !m.bodyHtml && !m.bodyText.trim())) {
+    if (hasBlank) {
       void backend
         .refetchMessageBody(id)
         .then((healed) => {
@@ -228,9 +238,15 @@ export const useMail = create<MailState>((set, get) => ({
                 id,
                 healed.length
               ),
+              // heal attempted — stop the spinner; any still-blank message is
+              // genuinely unavailable and shows the terminal fallback instead.
+              blankHealDone: true,
             }));
         })
-        .catch(() => {});
+        .catch(() => {
+          // even on error, stop spinning so the fallback can show
+          if (get().openThreadId === id) set({ blankHealDone: true });
+        });
     }
   },
 

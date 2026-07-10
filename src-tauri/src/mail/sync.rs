@@ -28,12 +28,18 @@ fn history_key(account_id: &str) -> String {
 /// mail:updated). `force_reconcile` ignores the stored historyId and does a full
 /// listing pass — the periodic safety net that catches inbox removals the
 /// incremental path missed.
+///
+/// `on_progress` is called as the initial reconcile streams threads in (see
+/// `reconcile`); the caller wires it to emit `mail:updated` (+ `sync:progress`)
+/// so the inbox paints and fills in live instead of all-at-once at the end. It's
+/// a no-op-friendly hook — the cheap incremental path never invokes it.
 pub async fn full_sync(
     http: &reqwest::Client,
     session: &mut GmailSession,
     db: &std::sync::Mutex<Connection>,
     account_id: &str,
     force_reconcile: bool,
+    on_progress: &(dyn Fn() + Send + Sync),
 ) -> Result<bool, String> {
     let key = history_key(account_id);
     let start: Option<String> = if force_reconcile {
@@ -49,11 +55,11 @@ pub async fn full_sync(
             // one returns 400. Either way reconcile from scratch instead of
             // pinning a dead baseline and re-failing the same window forever.
             Err(e) if e.contains("(404") || e.contains("(400") => {
-                reconcile(http, session, db, account_id, &key).await?
+                reconcile(http, session, db, account_id, &key, on_progress).await?
             }
             Err(e) => return Err(e),
         },
-        None => reconcile(http, session, db, account_id, &key).await?,
+        None => reconcile(http, session, db, account_id, &key, on_progress).await?,
     };
 
     // Muted threads never sit in the inbox: any that resurfaced (new reply)
@@ -126,12 +132,20 @@ async fn incremental(
 
 /// Full listing pass; also the initial backfill. Stores the new baseline
 /// historyId (captured BEFORE listing, so nothing in between is missed).
+///
+/// Inbox-first: the inbox is listed, diffed, and fetched **before** done/trash,
+/// and `on_progress` fires every `STREAM_EVERY` threads, so the inbox paints
+/// and fills in live while the rest of history backfills behind it (the crawler
+/// takes the tail past the caps). The per-folder caps are unchanged — the
+/// "archived elsewhere" flip below assumes the inbox listing is complete, which
+/// the 500-cap upholds.
 async fn reconcile(
     http: &reqwest::Client,
     session: &mut GmailSession,
     db: &std::sync::Mutex<Connection>,
     account_id: &str,
     key: &str,
+    on_progress: &(dyn Fn() + Send + Sync),
 ) -> Result<bool, String> {
     // Captured BEFORE the listings so a thread the user trashes mid-reconcile
     // isn't mistaken for a server-side restore and resurrected below.
@@ -146,6 +160,16 @@ async fn reconcile(
         .map(str::to_string)
         .or_else(|| prof["historyId"].as_u64().map(|n| n.to_string()))
         .unwrap_or_default();
+    // threadsTotal is the denominator for the "downloading mail history"
+    // indicator (see emit_sync_progress). Gmail may report it as a number or a
+    // string; keep any prior value if this profile omitted it.
+    let threads_total = prof["threadsTotal"]
+        .as_i64()
+        .or_else(|| prof["threadsTotal"].as_str().and_then(|s| s.parse().ok()));
+    if let Some(total) = threads_total.filter(|&t| t > 0) {
+        let conn = db.lock().unwrap();
+        let _ = store::set_json(&conn, &format!("threads_total:{account_id}"), &total);
+    }
 
     // Refresh the label id→name map; older syncs stored opaque ids in
     // threads.labels, so repair those rows once the map is known.
@@ -160,38 +184,19 @@ async fn reconcile(
         Err(e) => eprintln!("[sync:{account_id}] label listing failed: {e}"),
     }
 
+    // ---- Phase 1: inbox, so it paints before done/trash are even listed ----
     let inbox = session
         .list_thread_ids_paged(http, "in:inbox", INBOX_BACKFILL)
         .await?;
-    let done = session
-        .list_thread_ids_paged(http, "-in:inbox -in:spam -in:trash -in:draft", DONE_BACKFILL)
-        .await?;
-    let trash = session
-        .list_thread_ids_paged(http, "in:trash", TRASH_BACKFILL)
-        .await?;
-
     let inbox_ids: HashSet<&str> = inbox.iter().map(|(id, _)| id.as_str()).collect();
-    let live_ids: HashSet<&str> =
-        inbox.iter().chain(done.iter()).map(|(id, _)| id.as_str()).collect();
-    let trash_ids: HashSet<&str> = trash.iter().map(|(id, _)| id.as_str()).collect();
-
-    // Which threads need a full fetch? New ones and ones whose historyId moved.
-    let mut to_fetch: Vec<String> = vec![];
+    let mut inbox_to_fetch: Vec<String> = vec![];
     {
         let conn = db.lock().unwrap();
-        for (id, history_id) in inbox.iter().chain(done.iter()).chain(trash.iter()) {
-            let known: Option<String> = conn
-                .query_row(
-                    "SELECT COALESCE(history_id, '') FROM threads WHERE id = ?1",
-                    [id.as_str()],
-                    |r| r.get(0),
-                )
-                .ok();
-            if known.as_deref() != Some(history_id.as_str()) {
-                to_fetch.push(id.clone());
+        for (id, history_id) in &inbox {
+            if !thread_history_matches(&conn, id, history_id) {
+                inbox_to_fetch.push(id.clone());
             }
         }
-
         // Threads we think are in the inbox but the server no longer does
         // (archived elsewhere) — flip them locally.
         let local_inbox: Vec<String> = store::list_threads(&conn, "inbox", account_id)?
@@ -206,17 +211,33 @@ async fn reconcile(
             }
         }
     }
+    changed |= fetch_streaming(http, session, db, account_id, &inbox_to_fetch, on_progress).await;
+    // Repaint once more so the last (sub-batch) of inbox threads shows before we
+    // move on to the slower done/trash backfill.
+    on_progress();
 
-    for id in to_fetch {
-        match refetch_thread(http, session, db, account_id, &id).await {
-            Ok(_) => changed = true,
-            // One poison thread must not abort the pass and skip storing the
-            // baseline below — otherwise the account never advances off reconcile
-            // and re-runs the full listing every cycle (same rationale as
-            // incremental's log-and-continue).
-            Err(e) => eprintln!("[sync:{account_id}] reconcile refetch {id} failed: {e}"),
+    // ---- Phase 2: done + trash behind the now-visible inbox ----
+    let done = session
+        .list_thread_ids_paged(http, "-in:inbox -in:spam -in:trash -in:draft", DONE_BACKFILL)
+        .await?;
+    let trash = session
+        .list_thread_ids_paged(http, "in:trash", TRASH_BACKFILL)
+        .await?;
+
+    let live_ids: HashSet<&str> =
+        inbox.iter().chain(done.iter()).map(|(id, _)| id.as_str()).collect();
+    let trash_ids: HashSet<&str> = trash.iter().map(|(id, _)| id.as_str()).collect();
+
+    let mut rest_to_fetch: Vec<String> = vec![];
+    {
+        let conn = db.lock().unwrap();
+        for (id, history_id) in done.iter().chain(trash.iter()) {
+            if !thread_history_matches(&conn, id, history_id) {
+                rest_to_fetch.push(id.clone());
+            }
         }
     }
+    changed |= fetch_streaming(http, session, db, account_id, &rest_to_fetch, on_progress).await;
 
     // Two-way trash: threads the server has in trash get hidden locally
     // (upsert never touches the hidden column), and threads restored on the
@@ -251,6 +272,49 @@ async fn reconcile(
         store::set_json(&conn, key, &baseline)?;
     }
     Ok(changed)
+}
+
+/// Does the locally-stored thread already carry this exact history_id? (A miss
+/// — new thread or a moved history_id — means it needs a full refetch.)
+fn thread_history_matches(conn: &Connection, id: &str, history_id: &str) -> bool {
+    let known: Option<String> = conn
+        .query_row(
+            "SELECT COALESCE(history_id, '') FROM threads WHERE id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .ok();
+    known.as_deref() == Some(history_id)
+}
+
+/// Refetch a batch of threads, pinging `on_progress` every `STREAM_EVERY` so the
+/// UI reveals them as they land instead of all-at-once at the end. Returns true
+/// if anything was fetched. One poison thread is logged and skipped — it must
+/// not abort the pass (which would skip storing the reconcile baseline and pin
+/// the account to re-run the full listing every cycle).
+async fn fetch_streaming(
+    http: &reqwest::Client,
+    session: &mut GmailSession,
+    db: &std::sync::Mutex<Connection>,
+    account_id: &str,
+    ids: &[String],
+    on_progress: &(dyn Fn() + Send + Sync),
+) -> bool {
+    const STREAM_EVERY: usize = 25;
+    let mut changed = false;
+    let mut since_emit = 0usize;
+    for id in ids {
+        match refetch_thread(http, session, db, account_id, id).await {
+            Ok(_) => changed = true,
+            Err(e) => eprintln!("[sync:{account_id}] reconcile refetch {id} failed: {e}"),
+        }
+        since_emit += 1;
+        if since_emit >= STREAM_EVERY {
+            on_progress();
+            since_emit = 0;
+        }
+    }
+    changed
 }
 
 /// Fetch one thread and apply it locally. Handles deletion (404 → drop the

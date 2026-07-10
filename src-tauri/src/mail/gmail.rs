@@ -390,7 +390,12 @@ pub async fn hydrate_body_data(
     session: &mut GmailSession,
     thread_json: &mut Value,
 ) {
-    const MAX_BODY_BYTES: usize = 5_000_000;
+    // Gmail's per-message ceiling is ~25 MB, so hydrating up to it means any
+    // body that fits in a message hydrates in full — no more messages persisting
+    // empty because their (large) HTML body lived behind body.attachmentId and
+    // tripped a smaller cap. Bodies larger than this are vanishingly rare; the
+    // reading pane shows a terminal "open in Gmail" for them instead of a spinner.
+    const MAX_BODY_BYTES: usize = 25_000_000;
     let Some(messages) = thread_json["messages"].as_array_mut() else {
         return;
     };

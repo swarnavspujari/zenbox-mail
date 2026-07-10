@@ -32,6 +32,7 @@ import type {
   SendAsAlias,
   Settings,
   Streaks,
+  SyncProgress,
   Thread,
   ThreadId,
   ZeroEvent,
@@ -207,8 +208,14 @@ export class MockBackend implements Backend {
   private state: PersistedState;
   private listeners = new Set<() => void>();
   private calendarListeners = new Set<(error: string | null) => void>();
+  private syncListeners = new Set<(p: SyncProgress) => void>();
   private cancelFlags = new Map<number, boolean>();
   private aiSeq = 1;
+  /** Simulated history-download state (mirrors the desktop's background crawl
+   *  so the demo shows the status strip + inbox-first reveal over fixtures). */
+  private lastProgress: SyncProgress | null = null;
+  private downloading = false;
+  private downloadStarted = false;
 
   constructor() {
     const seed = buildSeedData();
@@ -264,6 +271,47 @@ export class MockBackend implements Backend {
 
   private notify() {
     for (const cb of this.listeners) cb();
+  }
+
+  private emitProgress(p: SyncProgress) {
+    this.lastProgress = p;
+    for (const cb of this.syncListeners) cb(p);
+  }
+
+  /** Mirror the desktop's background history download: the inbox is "ready"
+   *  immediately while done/trash/etc. fill in a beat later, and a
+   *  `sync:progress` count climbs from the inbox size toward a "full history",
+   *  then hides. Non-destructive — everything settles within ~6s. Started lazily
+   *  on the first thread listing so it's visible right when the inbox first
+   *  paints (not spent during onboarding). */
+  private startHistoryDownload() {
+    const realCount = this.threads.filter((t) => this.inActiveAccount(t)).length;
+    if (realCount === 0) {
+      this.emitProgress({ indexed: 0, total: 0, done: true });
+      return;
+    }
+    const inboxCount = this.threads.filter(
+      (t) => this.inActiveAccount(t) && this.hiddenOf(t.id) === null && t.inInbox
+    ).length;
+    // The fixture corpus is tiny (a handful of threads, most in the inbox); a
+    // real mailbox's history is far larger. Use a synthetic denominator so the
+    // bar visibly climbs from the inbox toward a "full history", mirroring the
+    // desktop crawl that climbs to Gmail's threadsTotal over minutes.
+    const total = Math.max(realCount, 60);
+    this.downloading = true;
+    let indexed = Math.max(1, inboxCount);
+    this.emitProgress({ indexed, total, done: false });
+    const step = Math.max(1, Math.ceil((total - indexed) / 14));
+    const iv = setInterval(() => {
+      // first beat reveals the non-inbox views (inbox was visible from the
+      // start); each beat lands another slice of the backfill.
+      this.downloading = false;
+      indexed = Math.min(total, indexed + step);
+      const done = indexed >= total;
+      this.emitProgress({ indexed, total, done });
+      this.notify();
+      if (done) clearInterval(iv);
+    }, 450);
   }
 
   private wakeDueSnoozes() {
@@ -337,6 +385,15 @@ export class MockBackend implements Backend {
   }
 
   async listThreads(view: MailView): Promise<Thread[]> {
+    // Kick the simulated history download the first time the UI asks for mail,
+    // so the status strip + inbox-first reveal are visible at the inbox.
+    if (!this.downloadStarted) {
+      this.downloadStarted = true;
+      this.startHistoryDownload();
+    }
+    // Inbox-first: until the download's first beat lands, only the inbox (and
+    // its snoozed offshoot) is "ready"; done/trash/labels fill in a moment later.
+    if (this.downloading && view !== "inbox" && view !== "reminders") return [];
     const byDate = (a: Thread, b: Thread) => b.lastDate - a.lastDate;
     if (view === "trash")
       return this.threads
@@ -1500,6 +1557,14 @@ export class MockBackend implements Backend {
   onMailUpdated(cb: () => void): () => void {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
+  }
+  onSyncProgress(cb: (p: SyncProgress) => void): () => void {
+    this.syncListeners.add(cb);
+    // Replay the current state so a subscriber that mounts after the download
+    // started (App effect runs after the backend is constructed) still catches
+    // the in-flight progress.
+    if (this.lastProgress) cb(this.lastProgress);
+    return () => this.syncListeners.delete(cb);
   }
   onCalendarUpdated(cb: (error: string | null) => void): () => void {
     this.calendarListeners.add(cb);

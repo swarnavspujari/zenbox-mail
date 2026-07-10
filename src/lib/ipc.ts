@@ -30,6 +30,7 @@ import type {
   SendAsAlias,
   Settings,
   Streaks,
+  SyncProgress,
   Thread,
   ThreadId,
   ThreadInvite,
@@ -216,6 +217,9 @@ export interface Backend {
 
   /** Backend pushes when sync/reminders change mail state. Returns unsubscribe. */
   onMailUpdated(cb: () => void): () => void;
+  /** Fires as background mail history downloads (initial reconcile + crawl).
+   *  Drives the "Downloading mail history… N%" indicator. Returns unsubscribe. */
+  onSyncProgress(cb: (p: SyncProgress) => void): () => void;
   /** Fires when a calendar refresh lands (payload = error message or null). */
   onCalendarUpdated(cb: (error: string | null) => void): () => void;
   /** Fires when an opened thread's inline images finish resolving (threadId). */
@@ -541,6 +545,12 @@ class TauriBackend implements Backend {
   }
   onMailUpdated(cb: () => void): () => void {
     const un = listen("mail:updated", cb);
+    return () => {
+      void un.then((f) => f());
+    };
+  }
+  onSyncProgress(cb: (p: SyncProgress) => void): () => void {
+    const un = listen<SyncProgress>("sync:progress", (e) => cb(e.payload));
     return () => {
       void un.then((f) => f());
     };

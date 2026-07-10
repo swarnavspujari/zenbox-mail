@@ -59,6 +59,7 @@ export default function App() {
   const shortcutsOpen = useUi((s) => s.shortcutsOpen);
   const toast = useUi((s) => s.toast);
   const pendingSend = useUi((s) => s.pendingSend);
+  const syncProgress = useUi((s) => s.syncProgress);
   const openThreadId = useMail((s) => s.openThreadId);
   const eventModal = useCalendar((s) => s.modal);
   const eventPopover = useCalendar((s) => s.popover);
@@ -69,6 +70,15 @@ export default function App() {
   const onboarded = useSettings((s) => s.settings.onboarded);
   const accounts = useSettings((s) => s.accounts);
   const showShortcutBar = useSettings((s) => s.settings.showShortcutBar);
+
+  // Show the download strip only while history is actively downloading (total
+  // known, crawl not done). Clamp to 1–99% so it never reads "0%" or lingers at
+  // "100%" — `done` hides it outright.
+  const downloading =
+    !!syncProgress && !syncProgress.done && syncProgress.total > 0;
+  const downloadPct = downloading
+    ? Math.min(99, Math.max(1, Math.round((syncProgress.indexed / syncProgress.total) * 100)))
+    : 0;
 
   // The attribute must flip BEFORE React re-renders: QuoteFrame (compose)
   // bakes the current token values into its iframe srcDoc during render, and
@@ -107,6 +117,10 @@ export default function App() {
       }, 400);
     };
     const unMail = backend.onMailUpdated(debouncedRefresh);
+    // background history download → the "Downloading mail history… N%" strip
+    const unSync = backend.onSyncProgress((p) =>
+      useUi.getState().setSyncProgress(p)
+    );
     // inline images for the open thread resolved in the background — re-read it
     const unImages = backend.onThreadImages((id) => {
       if (useMail.getState().openThreadId === id)
@@ -128,6 +142,7 @@ export default function App() {
     return () => {
       clearTimeout(timer);
       unMail();
+      unSync();
       unImages();
       unTriage();
       unNotice();
@@ -306,24 +321,37 @@ export default function App() {
       {shortcutsOpen && <ShortcutsPanel />}
       </div>
 
-      {showShortcutBar && (
-        <footer className="flex h-[30px] shrink-0 items-center justify-center gap-4 overflow-hidden border-t border-line bg-surface px-3 text-[11.5px] text-ink-3">
-          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            Hit <span className="kbd">E</span> Mark Done
-          </span>
-          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            Hit <span className="kbd">H</span> to set a reminder
-          </span>
-          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            Hit <span className="kbd">C</span> to compose
-          </span>
-          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            Hit <span className="kbd">/</span> to search
-          </span>
-          <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-            Hit <span className="kbd">Ctrl</span>
-            <span className="kbd">K</span> for Fission Command
-          </span>
+      {(showShortcutBar || downloading) && (
+        <footer className="flex h-[30px] shrink-0 items-center gap-4 overflow-hidden border-t border-line bg-surface px-3 text-[11.5px] text-ink-3">
+          {downloading && (
+            <span
+              className="flex shrink-0 items-center gap-2 whitespace-nowrap text-ink-2"
+              title={`${syncProgress!.indexed.toLocaleString()} of ${syncProgress!.total.toLocaleString()} conversations downloaded`}
+            >
+              <span className="zb-spin inline-block h-3 w-3 rounded-full border-2 border-line-strong border-t-accent" />
+              Downloading mail history… {downloadPct}%
+            </span>
+          )}
+          {showShortcutBar && (
+            <div className="flex min-w-0 flex-1 items-center justify-center gap-4 overflow-hidden">
+              <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                Hit <span className="kbd">E</span> Mark Done
+              </span>
+              <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                Hit <span className="kbd">H</span> to set a reminder
+              </span>
+              <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                Hit <span className="kbd">C</span> to compose
+              </span>
+              <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                Hit <span className="kbd">/</span> to search
+              </span>
+              <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                Hit <span className="kbd">Ctrl</span>
+                <span className="kbd">K</span> for Fission Command
+              </span>
+            </div>
+          )}
         </footer>
       )}
       </div>

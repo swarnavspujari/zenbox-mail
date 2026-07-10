@@ -3,7 +3,7 @@ import { backend } from "@/lib/ipc";
 import { sanitizeUserHtml } from "@/lib/sanitize";
 import { splitThreads, useMail, visibleThreads } from "./mail";
 import { activeSignature, useSettings } from "./settings";
-import type { MailAttachment, OutgoingMail, ThreadId, ZeroEvent } from "@/lib/types";
+import type { MailAttachment, OutgoingMail, SyncProgress, ThreadId, ZeroEvent } from "@/lib/types";
 
 export type Screen = "mail" | "settings" | "search" | "calendar";
 
@@ -233,6 +233,10 @@ interface UiState {
   compose: ComposeState | null;
   celebration: ZeroEvent | null;
   toast: string | null;
+  /** Background mail-download progress (initial reconcile + history crawl);
+   *  drives the "Downloading mail history… N%" footer strip. Null until the
+   *  first sync:progress arrives. */
+  syncProgress: SyncProgress | null;
   /** A message queued in the Undo Send window: drives the bottom-left bar with
    *  its countdown, Z-to-undo, and Send-now (accelerate). Null when nothing is
    *  pending or the window has elapsed. */
@@ -280,6 +284,7 @@ interface UiState {
   setShortcutsOpen: (open: boolean) => void;
   setPendingSend: (p: PendingSend | null) => void;
   clearPendingSend: () => void;
+  setSyncProgress: (p: SyncProgress) => void;
   /** Called after any archive-ish action: fires the celebration if the
    *  active split just hit zero. */
   checkInboxZero: () => Promise<void>;
@@ -313,6 +318,7 @@ export const useUi = create<UiState>((set, get) => ({
   compose: null,
   celebration: null,
   toast: null,
+  syncProgress: null,
   pendingSend: null,
   settingsTab: "account",
   suggestions: [],
@@ -371,6 +377,7 @@ export const useUi = create<UiState>((set, get) => ({
   setShortcutsOpen: (open) => set({ shortcutsOpen: open }),
   setPendingSend: (p) => set({ pendingSend: p }),
   clearPendingSend: () => set({ pendingSend: null }),
+  setSyncProgress: (p) => set({ syncProgress: p }),
 
   showToast: (msg) => {
     set({ toast: msg });

@@ -351,3 +351,13 @@ export interface ZeroEvent {
   weekly: number;
   imagePath: string; // asset path or file path to show
 }
+
+/** Background mail-download progress for the status indicator. `indexed` =
+ *  threads stored locally, `total` = Gmail's threadsTotal (0 when unknown),
+ *  `done` = every connected account's history crawl has finished. The UI shows
+ *  "Downloading mail history… N%" while `total > 0 && !done`. */
+export interface SyncProgress {
+  indexed: number;
+  total: number;
+  done: boolean;
+}
