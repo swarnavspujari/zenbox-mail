@@ -238,8 +238,8 @@ body {
    `visible`, which the CSS Overflow spec re-computes to `auto` — so a trackpad's
    horizontal component can drift these panes sideways. Pinning overflow-x hidden
    kills that diagonal drift; overscroll-behavior:contain stops scroll-chaining.
-   Wide email content still scrolls horizontally inside its own iframe (#fm-root
-   in ThreadView), which is a separate scroll root and unaffected by this. */
+   Wide email content still scrolls horizontally inside its own box (#fm-root
+   in ThreadView's shadow root), a separate scroll root unaffected by this. */
 @layer utilities {
   .overflow-y-auto {
     overflow-x: hidden;
@@ -301,7 +301,8 @@ body {
 
 /* Rich compose editor (TipTap/ProseMirror). Headless — every color is a token,
    so it tracks the active theme. Scoped to `.fm-editor` (set on the editable
-   node) to avoid touching the reading pane's sandboxed iframe. */
+   node); the reading pane's email body lives in a shadow root that app CSS
+   can't reach anyway. */
 .fm-editor {
   padding: 12px 16px;
   min-height: 100%;

@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { backend, openExternal } from "@/lib/ipc";
+import { prepareEmailHtml } from "@/lib/email-render";
 import { useMail } from "@/stores/mail";
 import { useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
@@ -48,115 +49,105 @@ function splitQuotedText(text: string): { main: string; quoted: string | null } 
 
 const QUOTE_MARKERS = ["gmail_quote", "<blockquote"];
 
+// Injected into every message's shadow root. Theme tokens: CSS custom
+// properties (and color-scheme) inherit THROUGH shadow boundaries, so the
+// email restyles live on theme flips with no re-render. The email's own
+// <style> rules are scoped to this shadow tree; app CSS can't reach in.
+const EMAIL_SHADOW_CSS = `
+  :host{display:block;background:var(--bg-raised,#ffffff);color:var(--text-primary,#1d222b);
+        font:13.5px/1.55 "Segoe UI",system-ui,sans-serif;
+        user-select:text;-webkit-user-select:text}
+  /* Emails that style their own colors are authored against white; on the
+     dark theme they'd go dark-on-dark, so designed mail gets a light canvas
+     (Superhuman does the same). Bare mail keeps the theme canvas above. */
+  :host([data-light-canvas]){background:#ffffff;color:#1d222b;color-scheme:light}
+  :host([data-light-canvas]) a{color:#3b52c4}
+  :host([data-light-canvas]) blockquote{border-left-color:#d5d9e2;color:#5b6272}
+  #fm-pad{padding:16px 18px}
+  /* Wide content (fixed-width tables, <pre>, oversized imgs) gets a
+     horizontal scrollbar INSIDE the email box rather than widening the
+     reading pane. #fm-root is its own scroll root, so this axis can never
+     chain into the pane — no diagonal drift; y stays content-sized so the
+     pane scrolls as one document. */
+  #fm-root{overflow-x:auto;overflow-y:hidden;word-break:break-word}
+  img{max-width:100%;height:auto}
+  table{max-width:100%}
+  a{color:var(--accent-strong,#3b52c4)}
+  blockquote{margin:8px 0 8px 4px;padding-left:12px;border-left:2px solid var(--border-strong,#d5d9e2);color:var(--text-secondary,#5b6272)}
+  pre{overflow-x:auto;max-width:100%}
+  :host(:not([data-show-quote])) .gmail_quote,
+  :host(:not([data-show-quote])) #fm-root>blockquote:last-of-type,
+  :host(:not([data-show-quote])) div>blockquote:last-child{display:none!important}
+`;
+
 /**
- * Sanitized HTML body in a script-less sandboxed iframe. Height tracks the
- * content; links open in the system browser; quoted trails collapse behind
- * the same ••• toggle as plain text. The iframe can't inherit CSS variables
- * through srcDoc, so the current theme's tokens are read at build time and
- * inlined — no more hardcoded white island in the dark shell.
+ * Sanitized HTML body rendered inline in a shadow root, so the reading pane
+ * is one continuous document: selection runs subject → body, one native
+ * scroll spans the pane, and heights are real at first paint (no measuring,
+ * no reflow when stepping between emails). Isolation model: the shadow root
+ * scopes CSS both ways, and the wrapper div's `contain: layout paint style`
+ * is a layout jail the email's CSS cannot reach (selectors can't cross the
+ * boundary outward and :host rules are neutered in the sanitizer), so even
+ * position:fixed content paints inside the message box. With the iframe
+ * sandbox gone, the Rust sanitizer (mail/render.rs) is the sole trust
+ * boundary for active content. Links open in the system browser; quoted
+ * trails collapse behind the same ••• toggle as plain text.
  */
 function HtmlBody({
   html,
+  subject,
   showQuote,
-  theme,
 }: {
   html: string;
+  subject: string | null;
   showQuote: boolean;
-  theme: "dark" | "light";
 }) {
-  const ref = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(80);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const prepared = useMemo(
+    () => prepareEmailHtml(html, { subject }),
+    [html, subject]
+  );
+  // "Designed" mail declares its own colors or backgrounds somewhere;
+  // bare mail (plain Gmail replies) declares neither.
+  const ownColors = useMemo(
+    () => /color\s*[:=]|background[^;:=]*[:=]/i.test(html),
+    [html]
+  );
 
-  const srcDoc = useMemo(() => {
-    const css = getComputedStyle(document.documentElement);
-    const v = (name: string, fallback: string) =>
-      css.getPropertyValue(name).trim() || fallback;
-    const quoteCss = showQuote
-      ? ""
-      : ".gmail_quote{display:none!important} body>blockquote:last-of-type, div>blockquote:last-child{display:none!important}";
-    // The email is wrapped in #fm-root so its true content height can be read
-    // off that element — some newsletters set body/html height:100%, which
-    // makes body.scrollHeight track the iframe viewport and clip the content.
-    return `<!doctype html><html><head><meta charset="utf-8"><style>
-      :root{color-scheme:${theme}}
-      html,body{margin:0;padding:0;height:auto!important}
-      body{background:${v("--bg-raised", "#ffffff")};color:${v("--text-primary", "#1d222b")};
-           font:13.5px/1.55 "Segoe UI",system-ui,sans-serif;
-           padding:16px 18px;word-break:break-word;overflow-x:hidden}
-      /* Wide content (fixed-width tables, <pre>, oversized imgs) gets a
-         horizontal scrollbar INSIDE the email box rather than being clipped.
-         #fm-root is its own scroll root, so this axis can never chain into the
-         reading pane — no diagonal drift. height:auto means y never overflows. */
-      #fm-root{overflow-x:auto;overflow-y:hidden}
-      img{max-width:100%;height:auto}
-      table{max-width:100%}
-      a{color:${v("--accent-strong", "#3b52c4")}}
-      blockquote{margin:8px 0 8px 4px;padding-left:12px;border-left:2px solid ${v("--border-strong", "#d5d9e2")};color:${v("--text-secondary", "#5b6272")}}
-      pre{white-space:pre-wrap}
-      ${quoteCss}
-    </style></head><body><div id="fm-root">${html}</div></body></html>`;
-  }, [html, showQuote, theme]);
-
-  useEffect(() => {
-    const iframe = ref.current;
-    if (!iframe) return;
-    let ro: ResizeObserver | null = null;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const wire = () => {
-      const doc = iframe.contentDocument;
-      if (!doc?.body) return;
-      // Measure the content wrapper (#fm-root), not body/documentElement: a
-      // wrapper div's height is its content, unaffected by an email's own
-      // body/html height:100% (which was clipping some newsletters). +32 for
-      // our body padding. Never mutate the iframe height here — React owns it,
-      // so there's no ResizeObserver feedback loop.
-      const measure = () => {
-        const root = doc.getElementById("fm-root");
-        const h = Math.max(
-          (root?.offsetHeight ?? 0) + 32,
-          doc.body.scrollHeight
-        );
-        setHeight(Math.min(20_000, Math.max(40, h)));
-      };
-      measure();
-      ro = new ResizeObserver(measure);
-      const root = doc.getElementById("fm-root");
-      if (root) ro.observe(root);
-      ro.observe(doc.body);
-      // late-loading remote images change the layout
-      for (const img of Array.from(doc.images)) {
-        img.addEventListener("load", measure);
-      }
-      // re-measure after layout/fonts/late content settle (catches newsletters
-      // whose height isn't final on first paint)
-      for (const d of [150, 500, 1200]) timers.push(setTimeout(measure, d));
-      doc.addEventListener("click", (e) => {
-        const a = (e.target as Element | null)?.closest?.("a");
-        if (a?.getAttribute("href")) {
-          e.preventDefault();
-          const href = a.getAttribute("href")!;
-          if (/^https?:|^mailto:/.test(href)) void openExternal(href);
-        }
-      });
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+    root.innerHTML = `<style>${EMAIL_SHADOW_CSS}</style><div id="fm-pad"><div id="fm-root">${prepared}</div></div>`;
+    const open = (e: Event) => {
+      const a = (e.target as Element | null)?.closest?.("a");
+      if (!a) return;
+      e.preventDefault(); // relative/#fragment links must never navigate the app
+      const href = a.getAttribute("href");
+      if (href && /^https?:|^mailto:/i.test(href)) void openExternal(href);
     };
-    iframe.addEventListener("load", wire);
-    wire();
+    const aux = (e: Event) => {
+      if ((e as MouseEvent).button === 1) open(e);
+    };
+    root.addEventListener("click", open);
+    root.addEventListener("auxclick", aux);
     return () => {
-      iframe.removeEventListener("load", wire);
-      ro?.disconnect();
-      timers.forEach(clearTimeout);
+      root.removeEventListener("click", open);
+      root.removeEventListener("auxclick", aux);
     };
-  }, [srcDoc]);
+  }, [prepared]);
 
   return (
-    <iframe
-      ref={ref}
-      sandbox="allow-same-origin"
-      srcDoc={srcDoc}
-      title="message"
-      className="w-full rounded-b-[10px] border-0 bg-raised"
-      style={{ height }}
-    />
+    <div
+      style={{ contain: "layout paint style" }}
+      className="rounded-b-[10px] bg-raised"
+    >
+      <div
+        ref={hostRef}
+        data-show-quote={showQuote ? "" : undefined}
+        data-light-canvas={ownColors ? "" : undefined}
+      />
+    </div>
   );
 }
 
@@ -207,14 +198,14 @@ function AttachmentChip({ a }: { a: Attachment }) {
 function MessageCard({
   m,
   expanded,
+  first,
   last,
-  theme,
   onToggle,
 }: {
   m: Message;
   expanded: boolean;
+  first: boolean;
   last: boolean;
-  theme: "dark" | "light";
   onToggle: () => void;
 }) {
   const [showQuote, setShowQuote] = useState(false);
@@ -269,7 +260,11 @@ function MessageCard({
       </button>
 
       {html ? (
-        <HtmlBody html={html} showQuote={showQuote} theme={theme} />
+        <HtmlBody
+          html={html}
+          subject={first ? m.subject : null}
+          showQuote={showQuote}
+        />
       ) : isEmpty ? (
         <div className="flex items-center gap-2 px-[18px] py-3 text-[13px] italic text-ink-3">
           <span className="zb-spin inline-block h-3 w-3 rounded-full border-2 border-line-strong border-t-accent" />
@@ -351,7 +346,6 @@ function InstantReplies() {
 export function ThreadView() {
   const messages = useMail((s) => s.openMessages);
   const threadId = useMail((s) => s.openThreadId);
-  const theme = useSettings((s) => s.settings.theme);
   const myEmail = useSettings((s) => s.accounts.active);
   const compose = useUi((s) => s.compose);
   // A reply/forward for THIS thread docks its composer inline at the bottom
@@ -361,14 +355,30 @@ export function ThreadView() {
   // Superhuman-style: older messages collapse; the last (and any unread)
   // stay open. User toggles override until the thread changes.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
-  const endRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setOverrides({});
   }, [threadId]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    // Bodies lay out at their real height before paint now (shadow DOM, no
+    // iframe measurement lag), so position the pane deterministically: a
+    // single message opens at the subject; a conversation jumps to the top
+    // of the latest message (older ones sit collapsed above).
+    const scroller = scrollRef.current;
+    const last = listRef.current?.lastElementChild as HTMLElement | null;
+    if (!scroller || !last) return;
+    if (messages.length === 1) {
+      scroller.scrollTop = 0;
+      return;
+    }
+    const top =
+      last.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop;
+    scroller.scrollTop = Math.max(0, top - 12);
   }, [threadId, messages.length]);
 
   // Fetch instant-reply suggestions for the open thread.
@@ -424,6 +434,7 @@ export function ThreadView() {
           </span>
         </div>
         <div
+          ref={scrollRef}
           data-thread-scroll
           className="min-h-0 flex-1 overflow-y-auto"
         >
@@ -444,14 +455,14 @@ export function ThreadView() {
               </div>
             </div>
             <InviteBar threadId={threadId} />
-            <div className="space-y-2">
+            <div ref={listRef} className="space-y-2">
               {messages.map((m, i) => (
                 <MessageCard
                   key={m.id}
                   m={m}
                   expanded={isExpanded(m, i)}
+                  first={i === 0}
                   last={i === messages.length - 1}
-                  theme={theme}
                   onToggle={() =>
                     setOverrides((o) => ({ ...o, [m.id]: !isExpanded(m, i) }))
                   }
@@ -460,7 +471,6 @@ export function ThreadView() {
             </div>
             {/* Threaded inline in the conversation column at the email's width. */}
             {replyingHere && <ReplyDock />}
-            <div ref={endRef} />
           </div>
         </div>
         {!replyingHere && <InstantReplies />}

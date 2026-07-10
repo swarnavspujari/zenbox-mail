@@ -70,9 +70,11 @@ export default function App() {
   const accounts = useSettings((s) => s.accounts);
   const showShortcutBar = useSettings((s) => s.settings.showShortcutBar);
 
-  // The attribute must flip BEFORE React re-renders: HtmlBody bakes the
-  // current token values into its iframe srcDoc during render, and a zustand
-  // subscription fires synchronously on save while effects run after.
+  // The attribute must flip BEFORE React re-renders: QuoteFrame (compose)
+  // bakes the current token values into its iframe srcDoc during render, and
+  // a zustand subscription fires synchronously on save while effects run
+  // after. (The reading pane needs no re-render at all — its shadow DOM
+  // inherits the custom properties live.)
   useEffect(() => {
     document.documentElement.dataset.theme =
       useSettings.getState().settings.theme;

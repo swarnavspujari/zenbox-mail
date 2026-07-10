@@ -1,6 +1,6 @@
 [package]
 name = "fission-mail"
-version = "0.17.1"
+version = "0.18.0"
 description = "Fission Mail — keyboard-first, AI-native email client"
 authors = ["Swarnav S Pujari"]
 license = "MIT"

@@ -246,6 +246,31 @@ const seeds: Seed[] = [
         unread: true,
         bodyText:
           "This week: a deep dive on continuous discovery habits, with playbooks from PMs at Figma, Linear, and Notion... [newsletter continues]",
+        // Exercises the inline shadow-DOM reading pane against the patterns
+        // that used to break in the iframe: a <head> <style> the layout
+        // depends on, a class-hidden preheader, an inline-hidden preview-pad
+        // run, and a hero title duplicating the subject (both stripped at
+        // render by prepareEmailHtml).
+        bodyHtml: `<html><head><style>
+  .preheader { display: none !important; }
+  .wrap { max-width: 600px; margin: 0 auto; font-family: Georgia, serif; }
+  .lede { font-size: 15px; line-height: 1.65; color: #24292f; margin: 0 0 14px; }
+  .card { border: 1px solid #e1e4e8; border-radius: 8px; padding: 14px 16px; margin: 0 0 14px; background: #fafbfc; }
+  .cta { color: #ffffff; background: #ff6719; border-radius: 20px; padding: 8px 18px; text-decoration: none; display: inline-block; }
+  @media (max-width: 600px) { .wrap { width: 100% !important; } }
+</style></head><body>
+<div class="preheader">This week: a deep dive on continuous discovery habits, with playbooks from PMs at Figma, Linear, and Notion.</div>
+<div style="display:none;font-size:1px;line-height:1px;max-height:0;overflow:hidden">&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;</div>
+<div class="wrap">
+  <h1 style="font-size:26px;line-height:1.25;margin:8px 0 4px">How the best PMs run discovery</h1>
+  <p style="color:#6a737d;margin:0 0 18px;font-size:13px">Lenny's Newsletter &middot; July 2026</p>
+  <p class="lede">Continuous discovery isn't a research phase you schedule — it's a weekly habit. The teams that ship the right things talk to customers on a cadence, not a milestone.</p>
+  <div class="card"><b>The playbook, condensed:</b><br>1. One customer conversation per week, owned by the PM.<br>2. Assumptions mapped before solutions get named.<br>3. Prototypes tested on Tuesdays, decisions made on Thursdays.</div>
+  <p class="lede">Inside: how PMs at <a href="https://example.com/figma">Figma</a>, <a href="https://example.com/linear">Linear</a>, and Notion structure their weeks, and the interview snapshot template they all converge on.</p>
+  <p style="margin:18px 0"><a class="cta" href="https://example.com/discovery-deep-dive">Read the full post</a></p>
+  <p style="font-size:12px;color:#6a737d">You're on the free list. <a href="https://unsubscribe.example.com/lenny">Unsubscribe</a></p>
+</div>
+</body></html>`,
       },
     ],
   },
@@ -268,6 +293,18 @@ const seeds: Seed[] = [
         ageMs: 5 * D,
         bodyText:
           "CI on main failed after 2m14s.\n\nwindows-build: error LNK2019 unresolved external symbol...\n\nView the full run for details.",
+        // Wide content: a long single-line <pre> and a fixed-width nowrap
+        // table must scroll inside their own box, never widen the pane.
+        bodyHtml: `<div style="font-family:-apple-system,'Segoe UI',sans-serif;max-width:640px">
+  <p style="margin:0 0 12px"><b>[fission-mail]</b> Run <a href="https://example.com/runs/8841">#8841</a> failed on <code>main</code> after 2m14s.</p>
+  <pre style="background:#f6f8fa;border:1px solid #d0d7de;border-radius:6px;padding:12px;font-size:12px">windows-build: error LNK2019: unresolved external symbol __imp_OrtGetApiBase referenced in function ort_api_init (fastembed-5.17.2\\ort\\sys\\lib.rs:114) [C:\\actions-runner\\_work\\email-productivity-client\\src-tauri\\target\\release\\deps\\fission_mail.exe]</pre>
+  <table width="720" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:12.5px;border:1px solid #d0d7de">
+    <tr style="background:#f6f8fa"><td nowrap><b>Job</b></td><td nowrap><b>Commit</b></td><td nowrap><b>Message</b></td><td nowrap><b>Duration</b></td></tr>
+    <tr><td nowrap>windows-build</td><td nowrap><code>f97f2d9c1a4e</code></td><td nowrap>chore: release v0.17.1 — snooze natural-language reminder parser and timezone labels</td><td nowrap>2m14s</td></tr>
+    <tr><td nowrap>lint-and-test</td><td nowrap><code>f97f2d9c1a4e</code></td><td nowrap>chore: release v0.17.1 — snooze natural-language reminder parser and timezone labels</td><td nowrap>58s ✓</td></tr>
+  </table>
+  <p style="margin:12px 0 0"><a href="https://example.com/runs/8841">View the full run</a> for logs and artifacts.</p>
+</div>`,
       },
     ],
   },
