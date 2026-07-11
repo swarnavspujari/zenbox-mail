@@ -314,6 +314,11 @@ pub struct EventDraft {
     pub location: Option<String>,
     pub description: Option<String>,
     pub attendees: Vec<String>,
+    /// Request a Google Meet: on insert, attach one; on edit, add one if the
+    /// event has none yet. Suppressed when a conference already exists, so an
+    /// update never duplicates it. Only Gmail calendars honor this.
+    #[serde(default)]
+    pub add_conferencing: bool,
 }
 
 /// An invite (or cancellation) detected in a mail thread, powering the RSVP

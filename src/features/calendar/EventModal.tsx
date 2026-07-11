@@ -91,6 +91,9 @@ export function EventModal() {
   const [notifyStep, setNotifyStep] = useState<EventDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Google Meet: default on once the event has a guest (or already has a Meet),
+  // but a manual toggle wins either way. null = follow that default.
+  const [meetChoice, setMeetChoice] = useState<boolean | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
 
   const writable = calendars.filter(
@@ -121,6 +124,9 @@ export function EventModal() {
 
   if (!modal) return null;
 
+  const addMeet =
+    meetChoice ?? (parseGuests(guests).length > 0 || !!ev?.hangoutLink);
+
   const buildDraft = (): EventDraft | string => {
     if (!title.trim()) return "Give the event a title";
     const startMs = allDay ? toMs(startDate, "00:00") : toMs(startDate, startTime);
@@ -140,6 +146,7 @@ export function EventModal() {
       location: location.trim() || null,
       description: description.trim() || null,
       attendees: parseGuests(guests),
+      addConferencing: addMeet,
     };
   };
 
@@ -331,6 +338,14 @@ export function EventModal() {
                 placeholder="Add guests (email, email…)"
               />
             </div>
+            <label className="mt-2 flex items-center gap-1.5 text-[12.5px] text-ink-2">
+              <input
+                type="checkbox"
+                checked={addMeet}
+                onChange={(e) => setMeetChoice(e.target.checked)}
+              />
+              Add Google Meet
+            </label>
           </div>
 
           <div>

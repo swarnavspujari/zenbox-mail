@@ -249,6 +249,10 @@ export interface EventDraft {
   description: string | null;
   /** Bare emails; existing guests keep their RSVP state on update. */
   attendees: string[];
+  /** Request a Google Meet: attach one on insert, or add one on edit if the
+   *  event has none yet (suppressed when a conference already exists, so an
+   *  update never duplicates it). Only Gmail calendars honor this. */
+  addConferencing: boolean;
 }
 
 /** Outcome of an event update/delete: saved, or refused because the event

@@ -367,14 +367,29 @@ pub fn event_body(draft: &crate::types::EventDraft, existing: Option<&CalendarEv
             }
         })
         .collect();
-    serde_json::json!({
+    let mut body = serde_json::json!({
         "summary": draft.title,
         "location": draft.location,
         "description": draft.description,
         "start": start,
         "end": end,
         "attendees": attendees,
-    })
+    });
+    // Attach a Google Meet when asked — but never re-send createRequest for an
+    // event that already has a conference (Google 400s / duplicates it), so this
+    // fires on insert and on the first "add Meet" edit only. requestId must be
+    // fresh-random per call: Google dedupes by it, and an id derived from the
+    // event would attach the same conference twice. The insert/patch URL's
+    // conferenceDataVersion=1 is what makes Google honor this block at all.
+    if draft.add_conferencing && existing.map_or(true, |e| e.hangout_link.is_none()) {
+        body["conferenceData"] = serde_json::json!({
+            "createRequest": {
+                "requestId": format!("fission-{:032x}", rand::random::<u128>()),
+                "conferenceSolutionKey": { "type": "hangoutsMeet" },
+            }
+        });
+    }
+    body
 }
 
 /// One event, fresh from the server (conflict review + RSVP base).
@@ -401,8 +416,12 @@ pub async fn insert_event(
     body: &Value,
     send_updates: &str,
 ) -> Result<CalendarEvent, String> {
-    let url =
-        format!("{BASE}/calendars/{}/events?sendUpdates={send_updates}", enc(&cal.id));
+    // conferenceDataVersion=1 lets Google honor a conferenceData.createRequest
+    // in the body; without it the field is silently dropped (see event_body).
+    let url = format!(
+        "{BASE}/calendars/{}/events?sendUpdates={send_updates}&conferenceDataVersion=1",
+        enc(&cal.id)
+    );
     let (status, text) =
         request_with_retry(http, reqwest::Method::POST, bearer, &url, Some(body), None).await?;
     if !status.is_success() {
@@ -422,8 +441,10 @@ pub async fn patch_event(
     body: &Value,
     send_updates: &str,
 ) -> Result<WriteOutcome, String> {
+    // conferenceDataVersion=1 so "add Meet on edit" (a createRequest in the
+    // body) is honored rather than silently stripped.
     let url = format!(
-        "{BASE}/calendars/{}/events/{}?sendUpdates={send_updates}",
+        "{BASE}/calendars/{}/events/{}?sendUpdates={send_updates}&conferenceDataVersion=1",
         enc(&cal.id),
         enc(event_id),
     );
@@ -546,4 +567,101 @@ fn rfc3339(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
         .unwrap_or_else(chrono::Utc::now)
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{CalendarEvent, EventDraft};
+
+    fn draft(add_conferencing: bool) -> EventDraft {
+        EventDraft {
+            calendar_id: "primary".into(),
+            title: "Sync".into(),
+            start_ms: 1_700_000_000_000,
+            end_ms: 1_700_003_600_000,
+            all_day: false,
+            location: None,
+            description: None,
+            attendees: vec!["guest@example.com".into()],
+            add_conferencing,
+        }
+    }
+
+    /// A cached event carrying (or not) an existing Meet — the update merge base.
+    fn existing(meet: Option<&str>) -> CalendarEvent {
+        CalendarEvent {
+            id: "evt1".into(),
+            calendar_id: "primary".into(),
+            calendar: "Primary".into(),
+            color: None,
+            title: "Sync".into(),
+            start_ms: 1_700_000_000_000,
+            end_ms: 1_700_003_600_000,
+            all_day: false,
+            location: None,
+            description: None,
+            html_link: None,
+            etag: None,
+            status: "confirmed".into(),
+            organizer_email: None,
+            organizer_self: true,
+            recurring_event_id: None,
+            hangout_link: meet.map(str::to_string),
+            attendees: vec![],
+            access_role: "owner".into(),
+            ical_uid: None,
+        }
+    }
+
+    fn create_request(body: &Value) -> Option<&Value> {
+        body.get("conferenceData")?.get("createRequest")
+    }
+
+    #[test]
+    fn insert_with_conferencing_injects_hangouts_meet_create_request() {
+        let body = event_body(&draft(true), None);
+        let cr = create_request(&body).expect("createRequest present on insert");
+        assert_eq!(cr["conferenceSolutionKey"]["type"], "hangoutsMeet");
+        assert!(
+            cr["requestId"].as_str().is_some_and(|s| !s.is_empty()),
+            "requestId must be a non-empty random token"
+        );
+    }
+
+    #[test]
+    fn insert_without_conferencing_omits_conference_data() {
+        let body = event_body(&draft(false), None);
+        assert!(body.get("conferenceData").is_none());
+    }
+
+    #[test]
+    fn update_keeps_existing_meet_without_resending_create_request() {
+        // Re-sending createRequest against an event that already has a Meet
+        // 400s / duplicates the conference — it must be suppressed on update.
+        let base = existing(Some("https://meet.google.com/abc-defg-hij"));
+        let body = event_body(&draft(true), Some(&base));
+        assert!(body.get("conferenceData").is_none());
+    }
+
+    #[test]
+    fn update_adds_a_meet_when_the_event_has_none() {
+        let base = existing(None);
+        let body = event_body(&draft(true), Some(&base));
+        assert!(
+            create_request(&body).is_some(),
+            "add-Meet-on-edit should inject createRequest"
+        );
+    }
+
+    #[test]
+    fn request_id_is_fresh_per_call_never_derived_from_the_event() {
+        // Google dedupes conferences by requestId; a stable/derived id would
+        // attach the same conference twice. Each call must produce a new one.
+        let a = event_body(&draft(true), None);
+        let b = event_body(&draft(true), None);
+        let ra = create_request(&a).unwrap()["requestId"].as_str().unwrap();
+        let rb = create_request(&b).unwrap()["requestId"].as_str().unwrap();
+        assert_ne!(ra, rb, "requestId must be freshly random per request");
+    }
 }

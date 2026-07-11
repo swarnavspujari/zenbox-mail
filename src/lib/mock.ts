@@ -1165,7 +1165,8 @@ export class MockBackend implements Backend {
     _sendUpdates: SendUpdates
   ): Promise<CalendarEvent> {
     const ov = this.state.calendarOverlay;
-    const id = `demo-created-${ov.seq++}`;
+    const n = ov.seq++;
+    const id = `demo-created-${n}`;
     const me = this.state.activeAccount;
     const ev: CalendarEvent = {
       id,
@@ -1184,7 +1185,9 @@ export class MockBackend implements Backend {
       organizerEmail: me,
       organizerSelf: true,
       recurringEventId: null,
-      hangoutLink: null,
+      // Demo stand-in for Google's auto-attached Meet when conferencing is
+      // requested (the desktop app gets a real meet.google.com link back).
+      hangoutLink: draft.addConferencing ? `https://meet.google.com/demo-${n}` : null,
       attendees: this.draftAttendees(draft, null),
       accessRole: "owner",
       icalUid: `${id}@fission.local`,
@@ -1207,7 +1210,7 @@ export class MockBackend implements Backend {
     if (etag && current.etag && etag !== current.etag) {
       return { status: "conflict", event: current };
     }
-    this.applyEventPatch(eventId, {
+    const patch: Partial<CalendarEvent> = {
       title: draft.title,
       startMs: draft.startMs,
       endMs: draft.endMs,
@@ -1216,7 +1219,13 @@ export class MockBackend implements Backend {
       description: draft.description,
       attendees: this.draftAttendees(draft, current),
       etag: this.bumpEtag(current.etag),
-    });
+    };
+    // Mirror event_body: add a Meet on edit only when the event has none yet,
+    // so re-saving an event that already has one never duplicates it.
+    if (draft.addConferencing && !current.hangoutLink) {
+      patch.hangoutLink = `https://meet.google.com/demo-${this.state.calendarOverlay.seq++}`;
+    }
+    this.applyEventPatch(eventId, patch);
     this.persist();
     this.notifyCalendar();
     return { status: "ok", event: this.findEvent(eventId) };
