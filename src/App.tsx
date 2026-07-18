@@ -1,15 +1,17 @@
 import { useEffect } from "react";
+import type { CSSProperties } from "react";
 import { backend, isTauri } from "@/lib/ipc";
 import { commandBindings, runCommandById } from "@/lib/commands";
 import { installKeyboard } from "@/lib/keyboard";
 import { startUpdateChecks, useUpdater } from "@/lib/updater";
-import { useMail } from "@/stores/mail";
+import { splitThreads, useMail } from "@/stores/mail";
 import { useProfiles, useSettings } from "@/stores/settings";
 import { useUi } from "@/stores/ui";
 import { Avatar } from "@/components/Avatar";
 import { IconButton } from "@/components/Button";
 import { HoverHint } from "@/components/HoverHint";
 import { NavRail } from "@/components/NavRail";
+import { RestState } from "@/components/RestState";
 import { UndoToast } from "@/components/UndoToast";
 import { UndoSendBar } from "@/components/UndoSendBar";
 import { MailScreen } from "@/features/inbox/MailScreen";
@@ -33,6 +35,25 @@ import { SettingsScreen } from "@/features/settings/SettingsScreen";
 import { ShortcutsPanel } from "@/features/shortcuts/ShortcutsPanel";
 import { AskAi } from "@/features/thread/AskAi";
 import { Onboarding } from "@/features/onboarding/Onboarding";
+
+// Translucent chrome over the inbox-zero photo (design "Inbox Zero" pattern):
+// re-pointing the tokens at white-alpha values lets the existing Tailwind
+// classes on the header / nav rail / footer render frosted-on-photo without
+// any new variants. Spread onto the chrome element's style while zero.
+const ZERO_CHROME = {
+  textShadow: "0 1px 2px rgba(0,0,0,0.35)",
+  "--bg-base": "transparent",
+  "--bg-surface": "rgba(255,255,255,0.10)",
+  "--bg-raised": "rgba(255,255,255,0.16)",
+  "--bg-hover": "rgba(255,255,255,0.14)",
+  "--text-primary": "#fff",
+  "--text-secondary": "rgba(255,255,255,0.88)",
+  "--text-muted": "rgba(255,255,255,0.65)",
+  "--border": "rgba(255,255,255,0.20)",
+  "--border-strong": "rgba(255,255,255,0.30)",
+  "--accent-dim": "rgba(255,255,255,0.16)",
+  "--accent-strong": "#fff",
+} as CSSProperties;
 
 function ActiveAvatar({ email }: { email: string }) {
   const profile = useProfiles((s) => s.profiles[email]);
@@ -62,6 +83,13 @@ export default function App() {
   const pendingSend = useUi((s) => s.pendingSend);
   const syncProgress = useUi((s) => s.syncProgress);
   const openThreadId = useMail((s) => s.openThreadId);
+  const listView = useMail((s) => s.listView);
+  const activeSplitId = useMail((s) => s.activeSplitId);
+  const inboxThreads = useMail((s) => s.inbox);
+  const mailLoaded = useMail((s) => s.loaded);
+  // Splits config feeds splitThreads via settings — subscribe so a split edit
+  // recomputes the zero state.
+  const splitsConfig = useSettings((s) => s.settings.splits);
   const eventModal = useCalendar((s) => s.modal);
   const eventPopover = useCalendar((s) => s.popover);
   const updateReady = useUpdater((s) => s.ready);
@@ -80,6 +108,18 @@ export default function App() {
   const downloadPct = downloading
     ? Math.min(99, Math.max(1, Math.round((syncProgress.indexed / syncProgress.total) * 100)))
     : 0;
+
+  // Inbox zero (design "Inbox Zero" pattern): the active split is empty, so
+  // the daily photo fills the WHOLE app and the chrome goes translucent above
+  // it. splitsConfig is a dependency because splitThreads reads it internally.
+  void splitsConfig;
+  const zero =
+    screen === "mail" &&
+    !openThreadId &&
+    listView === "inbox" &&
+    mailLoaded &&
+    splitThreads(inboxThreads, activeSplitId).length === 0;
+  const footerVisible = showShortcutBar || downloading;
 
   // The attribute must flip BEFORE React re-renders: QuoteFrame (compose)
   // bakes the current token values into its iframe srcDoc during render, and
@@ -189,26 +229,54 @@ export default function App() {
 
   return (
     <div className="relative flex h-full overflow-hidden bg-base">
+      {/* Inbox zero: the daily photo fills the whole app, chrome floats
+          translucently above it (top scrim keeps the header legible). */}
+      {zero && (
+        <>
+          <div className="absolute inset-0">
+            <RestState labelOffset={footerVisible ? 44 : 14} />
+          </div>
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 h-[150px]"
+            style={{
+              background:
+                "linear-gradient(to bottom, rgba(10,16,28,0.62), rgba(10,16,28,0.34) 55%, transparent)",
+            }}
+          />
+        </>
+      )}
       {/* Signature wash — the faint cerulean glow anchored to the bottom edge
           (design token --wash-bottom). A ~300px bottom strip, not full height:
           the light token's stops (transparent at 130px, cerulean at 40%) are
           only consistent on a short layer — full-height renders a hard band.
-          Present, never loud; overlays sit higher in the stack. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-[300px]"
-        style={{ background: "var(--wash-bottom)" }}
-      />
+          Present, never loud; overlays sit higher in the stack. Skipped over
+          the inbox-zero photo. */}
+      {!zero && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-[300px]"
+          style={{ background: "var(--wash-bottom)" }}
+        />
+      )}
       <NavRail
         view={screen === "calendar" ? "calendar" : "mail"}
+        overlay={zero}
         onMail={() => {
           useMail.getState().closeThread();
           useUi.getState().setScreen("mail");
         }}
         onCalendar={() => runCommandById("calendar.open")}
       />
-      <div className="flex min-w-0 flex-1 flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-base px-3.5">
+      <div className="relative flex min-w-0 flex-1 flex-col">
+      <header
+        className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-base px-3.5"
+        style={
+          zero
+            ? ({ ...ZERO_CHROME, "--border": "transparent" } as CSSProperties)
+            : undefined
+        }
+      >
         <button
           className="rounded px-1.5 py-0.5 text-[15px] text-ink-3 hover:bg-hover hover:text-ink"
           onClick={() => {
@@ -347,8 +415,19 @@ export default function App() {
       {shortcutsOpen && <ShortcutsPanel />}
       </div>
 
-      {(showShortcutBar || downloading) && (
-        <footer className="flex h-[30px] shrink-0 items-center gap-4 overflow-hidden border-t border-line bg-surface px-3 text-[11.5px] text-ink-3">
+      {footerVisible && (
+        <footer
+          className="flex h-[30px] shrink-0 items-center gap-4 overflow-hidden border-t border-line bg-surface px-3 text-[11.5px] text-ink-3"
+          style={
+            zero
+              ? ({
+                  ...ZERO_CHROME,
+                  "--bg-surface": "transparent",
+                  "--border": "rgba(255,255,255,0.14)",
+                } as CSSProperties)
+              : undefined
+          }
+        >
           {downloading && (
             <span
               className="flex shrink-0 items-center gap-2 whitespace-nowrap text-ink-2"

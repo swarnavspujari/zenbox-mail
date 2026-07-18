@@ -9,7 +9,6 @@ import { useUi } from "@/stores/ui";
 import { IconButton } from "@/components/Button";
 import { HoverHint } from "@/components/HoverHint";
 import { Label } from "@/components/Label";
-import { RestState } from "@/components/RestState";
 import type { Thread } from "@/lib/types";
 
 // Sender status dots — unread markers cycle so threads are tellable apart
@@ -357,8 +356,10 @@ export function MailScreen() {
                 ? listView.slice(6)
                 : listView;
 
-  // Inbox zero: the daily photo fills the whole list column edge-to-edge and
-  // the split tabs sit translucently ON it (design "Inbox Zero" pattern).
+  // Inbox zero: the daily photo fills the WHOLE app (rendered by App, behind
+  // the translucent chrome); here the split tabs go overlay-styled and the
+  // empty list container is skipped so the photo's attribution stays
+  // clickable (design "Inbox Zero" pattern).
   const zero = loaded && listView === "inbox" && threads.length === 0;
 
   return (
@@ -368,15 +369,6 @@ export function MailScreen() {
         className="relative flex min-w-0 flex-1 flex-col"
         onMouseDown={() => useUi.getState().setFocusRegion("mail")}
       >
-        {zero && (
-          <>
-            <div className="absolute inset-0">
-              <RestState />
-            </div>
-            {/* top scrim keeps the translucent split tabs legible on any photo */}
-            <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-black/30 to-transparent" />
-          </>
-        )}
         {listView === "inbox" ? (
           <SplitTabs overlay={zero} />
         ) : (
@@ -390,6 +382,7 @@ export function MailScreen() {
           </div>
         )}
         {selectedIds.size > 0 && <BulkBar count={selectedIds.size} />}
+        {!zero && (
         <div
           className="min-h-0 flex-1 overflow-y-auto"
           onScroll={(e) => {
@@ -423,7 +416,7 @@ export function MailScreen() {
               )}
             </div>
           )}
-          {/* inbox zero renders as the full-column photo above, not in-list */}
+          {/* inbox zero renders as the full-app photo (in App), not in-list */}
           {loaded && threads.length === 0 && listView !== "inbox" && (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-ink-3">
               <div className="text-4xl">◎</div>
@@ -431,6 +424,7 @@ export function MailScreen() {
             </div>
           )}
         </div>
+        )}
       </div>
       {calendarOpen && <CalendarPanel />}
     </div>

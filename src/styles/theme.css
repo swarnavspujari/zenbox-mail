@@ -215,7 +215,12 @@ html[data-theme="light"] *::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
 }
 
-@theme {
+/* `inline` so utilities reference the raw vars directly (bg-base →
+   var(--bg-base)) instead of resolving --color-* once at :root. That lets a
+   surface re-point the tokens locally — the inbox-zero overlay chrome sets
+   white-alpha values on the header/rail/footer and every Tailwind class
+   inside follows. */
+@theme inline {
   --color-base: var(--bg-base);
   --color-surface: var(--bg-surface);
   --color-raised: var(--bg-raised);

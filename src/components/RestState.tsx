@@ -35,8 +35,10 @@ function BlurCanvas({ hash }: { hash: string }) {
 }
 
 /** Inbox-zero rest state: just the daily photo, with the inbox-zero streak
- *  bottom-left and the Unsplash attribution bottom-right. No overlaid copy. */
-export function RestState() {
+ *  bottom-left and the Unsplash attribution bottom-right. No overlaid copy.
+ *  `labelOffset` lifts the streak + attribution above the shortcut-hint
+ *  footer when the photo fills the whole app behind it. */
+export function RestState({ labelOffset = 10 }: { labelOffset?: number }) {
   const [photo, setPhoto] = useState<DailyPhoto | null>(null);
   const [imgLoaded, setImgLoaded] = useState(false);
   const [hotlinkFailed, setHotlinkFailed] = useState(false);
@@ -83,7 +85,10 @@ export function RestState() {
       )}
       {/* subtle bottom scrim so the streak + attribution stay legible on any photo */}
       {photo && (
-        <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/45 to-transparent" />
+        <div
+          className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/45 to-transparent"
+          style={{ height: labelOffset + 86 }}
+        />
       )}
       {/* no photo (offline / no key): a calm centered fallback */}
       {!photo && (
@@ -93,12 +98,18 @@ export function RestState() {
         </div>
       )}
       {photo && (
-        <div className="absolute bottom-2.5 left-3.5 text-[12px] font-medium text-white/85 drop-shadow">
+        <div
+          className="absolute left-3.5 text-[12px] font-medium text-white/85 drop-shadow"
+          style={{ bottom: labelOffset }}
+        >
           {streakLabel}
         </div>
       )}
       {photo && (
-        <div className="absolute bottom-2.5 right-3.5 text-[11px] text-white/70">
+        <div
+          className="absolute right-3.5 text-[11px] text-white/70"
+          style={{ bottom: labelOffset }}
+        >
           {photo.authorLink ? (
             <>
               Photo by{" "}
