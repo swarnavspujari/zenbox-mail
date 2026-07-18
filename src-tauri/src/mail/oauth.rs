@@ -188,7 +188,14 @@ pub async fn refresh_access_token(
         .await
         .map_err(|_| "token refresh failed (network)".to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("token refresh failed ({})", resp.status()));
+        // Keep Google's error code ("invalid_grant" = the refresh token is
+        // expired/revoked server-side) — callers classify on it to mark the
+        // account disconnected instead of silently retrying forever. The body
+        // never contains the token itself.
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        let snippet: String = body.chars().take(200).collect();
+        return Err(format!("token refresh failed ({status}): {snippet}"));
     }
     let tok: TokenResponse = resp
         .json()

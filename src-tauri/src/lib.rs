@@ -207,7 +207,11 @@ async fn start_oauth(
             }
             accounts.accounts.clear();
         }
-        if !accounts.accounts.iter().any(|a| a.email == email) {
+        if let Some(existing) = accounts.accounts.iter_mut().find(|a| a.email == email) {
+            // Re-consent for an account that was marked disconnected (dead
+            // grant) — flip it back; the fresh token below replaces the old.
+            existing.connected = true;
+        } else {
             accounts.accounts.push(AccountInfo {
                 email: email.clone(),
                 provider: "gmail".into(),
@@ -308,12 +312,12 @@ async fn disconnect_account(
             .send()
             .await;
     }
-    secrets::delete(&secrets::gmail_refresh_entry(&email));
-    secrets::delete(secrets::GMAIL_REFRESH_TOKEN_LEGACY);
     state.gmail.lock().await.remove(&email);
+    // The account leaves the list FIRST (fast, transactional) so the UI
+    // updates instantly; the bulky mail purge runs chunked below. If the app
+    // dies mid-purge, the boot orphan sweep finishes the job.
     let accounts = {
         let conn = state.db.lock().unwrap();
-        store::clear_account_mail(&conn, &email)?;
         // Drop the recorded grant + synced Google data: the account is gone
         // (or about to reconnect fresh), so stale state must not linger.
         for key in [
@@ -350,8 +354,82 @@ async fn disconnect_account(
             accounts
         }
     };
+    // Token deletion (secrets::delete sweeps the legacy service names too —
+    // a surviving legacy copy would be resurrected by chain_get on the next
+    // boot as a permanently-failing revoked token).
+    secrets::delete(&secrets::gmail_refresh_entry(&email));
+    secrets::delete(secrets::GMAIL_REFRESH_TOKEN_LEGACY);
+    let _ = app.emit("mail:updated", ());
+    // Purge the account's mail in lock-released chunks: the account is
+    // already gone from the list (its rows are invisible), so the app stays
+    // fully usable while gigabytes of threads/FTS/vector rows drain.
+    clear_account_mail_chunked(&state, &email).await?;
+    {
+        // Disconnected the last real account while its rows still existed →
+        // the demo fallback above couldn't seed (threads weren't empty yet).
+        let conn = state.db.lock().unwrap();
+        let acc = store::get_accounts(&conn);
+        if acc.accounts.iter().all(|a| a.provider == "mock") {
+            let _ = mail::mock::seed_if_empty(&conn);
+        }
+    }
     let _ = app.emit("mail:updated", ());
     Ok(accounts)
+}
+
+/// Delete an account's mail a batch at a time, releasing the db lock between
+/// transactions so every other command interleaves — the app never freezes
+/// behind a disconnect, however large the account.
+async fn clear_account_mail_chunked(state: &AppState, account_id: &str) -> Result<(), String> {
+    loop {
+        // ~200 threads ≈ a one-second lock hold on a 5 GB real-world db
+        // (measured) — long enough to make progress, short enough that
+        // interleaved commands never feel stuck.
+        let ids = {
+            let conn = state.db.lock().unwrap();
+            store::thread_ids_page(&conn, account_id, 200)?
+        };
+        if ids.is_empty() {
+            return Ok(());
+        }
+        {
+            let conn = state.db.lock().unwrap();
+            store::delete_threads(&conn, &ids)?;
+        }
+        tokio::task::yield_now().await;
+    }
+}
+
+/// Boot-time self-heal: any thread rows whose account is no longer in the
+/// accounts list (a disconnect that died mid-purge, or the pre-fix frozen
+/// disconnect that got the app killed) drain away in the background.
+fn spawn_orphan_mail_sweep(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let orphans: Vec<String> = {
+            let conn = state.db.lock().unwrap();
+            let known: Vec<String> = store::get_accounts(&conn)
+                .accounts
+                .iter()
+                .map(|a| a.email.clone())
+                .collect();
+            let mut stmt = match conn.prepare("SELECT DISTINCT account_id FROM threads") {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            let all: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default();
+            all.into_iter().filter(|a| !known.contains(a)).collect()
+        };
+        for acct in orphans {
+            eprintln!("[sweep] clearing leftover mail for removed account {acct}");
+            if let Err(e) = clear_account_mail_chunked(&state, &acct).await {
+                eprintln!("[sweep:{acct}] {e}");
+            }
+        }
+    });
 }
 
 /// OpenID userinfo → name + photo (photo inlined as a data: URI so the UI
@@ -1517,6 +1595,45 @@ fn emit_sync_progress(app: &AppHandle) {
     let _ = app.emit("sync:progress", SyncProgress { indexed, total, done });
 }
 
+/// Google answered `invalid_grant`: the refresh token is expired or revoked
+/// server-side, so every future refresh will fail identically — retrying on
+/// the 30s cadence is pointless and, worse, silent.
+fn is_auth_revoked(err: &str) -> bool {
+    err.contains("invalid_grant")
+}
+
+/// Surface a dead grant instead of hiding it: flag the account (Settings
+/// shows the amber dot) and tell the user once. The caller drops the session,
+/// which stops the retry loop; a boot rebuilds one from the keychain, fails
+/// once, and lands back here — but the notice only fires on the true→false
+/// flip, so it never nags.
+fn mark_auth_lost(app: &AppHandle, email: &str) {
+    let state = app.state::<AppState>();
+    let flipped = {
+        let conn = state.db.lock().unwrap();
+        let mut accounts = store::get_accounts(&conn);
+        let mut flipped = false;
+        for a in accounts.accounts.iter_mut() {
+            if a.email == email && a.connected {
+                a.connected = false;
+                flipped = true;
+            }
+        }
+        if flipped {
+            let _ = store::save_accounts(&conn, &accounts);
+        }
+        flipped
+    };
+    if flipped {
+        let _ = app.emit(
+            "app:notice",
+            format!(
+                "Google sign-in for {email} expired or was revoked — reconnect it in Settings → Account."
+            ),
+        );
+    }
+}
+
 fn sync_in_background(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<AppState>();
@@ -1527,14 +1644,26 @@ fn sync_in_background(app: AppHandle) {
             emit_sync_progress(&app);
         };
         let mut changed = false;
+        let mut lost: Vec<String> = vec![];
         let mut sessions = state.gmail.lock().await;
         for (email, session) in sessions.iter_mut() {
             match mail::sync::full_sync(&state.http, session, &state.db, email, false, &on_progress).await {
                 Ok(c) => changed |= c,
-                Err(e) => eprintln!("[sync:{email}] {e}"),
+                Err(e) => {
+                    eprintln!("[sync:{email}] {e}");
+                    if is_auth_revoked(&e) {
+                        lost.push(email.clone());
+                    }
+                }
             }
         }
+        for email in &lost {
+            sessions.remove(email);
+        }
         drop(sessions);
+        for email in &lost {
+            mark_auth_lost(&app, email);
+        }
         if changed {
             let _ = app.emit("mail:updated", ());
         }
@@ -3379,6 +3508,9 @@ pub fn run() {
                 embedder: tokio::sync::Mutex::new(embed::Slot::Idle),
             });
 
+            // Drain any mail left behind by a disconnect that never finished.
+            spawn_orphan_mail_sweep(app.handle().clone());
+
             // Dev-only: SNAIL_AI_SMOKE=1 (legacy FISSION_AI_SMOKE) streams one
             // real draft at startup and logs the result — end-to-end proof of
             // context assembly + adapter + SSE parsing against the configured
@@ -3515,6 +3647,7 @@ pub fn run() {
                         store::wake_due_snoozes(&conn, now_ms()).unwrap_or_default()
                     };
                     let mut changed = !woke.is_empty();
+                    let mut lost: Vec<String> = vec![];
                     {
                         let mut sessions = state.gmail.lock().await;
                         for id in &woke {
@@ -3544,12 +3677,26 @@ pub fn run() {
                             emit_sync_progress(&handle);
                         };
                         for (email, session) in sessions.iter_mut() {
-                            if let Ok(c) =
-                                mail::sync::full_sync(&state.http, session, &state.db, email, force, &on_progress).await
+                            match mail::sync::full_sync(&state.http, session, &state.db, email, force, &on_progress).await
                             {
-                                changed |= c;
+                                Ok(c) => changed |= c,
+                                // Errors were silently discarded here — a dead
+                                // refresh token meant mail just stopped, with
+                                // no log line and no UI signal.
+                                Err(e) => {
+                                    eprintln!("[sync:{email}] {e}");
+                                    if is_auth_revoked(&e) {
+                                        lost.push(email.clone());
+                                    }
+                                }
                             }
                         }
+                        for email in &lost {
+                            sessions.remove(email);
+                        }
+                    }
+                    for email in &lost {
+                        mark_auth_lost(&handle, email);
                     }
                     // History crawl: one page per tick toward a fully-indexed
                     // mailbox (guarded against overlap; skips reconcile ticks

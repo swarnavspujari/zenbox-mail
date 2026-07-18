@@ -1204,20 +1204,57 @@ pub fn reset_history(conn: &Connection, account_id: &str) -> Result<(), String> 
     Ok(())
 }
 
-pub fn clear_account_mail(conn: &Connection, account_id: &str) -> Result<(), String> {
+/// One page of an account's thread ids. The chunked account-clear (see
+/// disconnect_account) walks these a batch at a time so the db lock can be
+/// released between transactions — a fully-crawled account is tens of
+/// thousands of threads in a multi-GB db, and clearing it in one hold froze
+/// every other command for minutes.
+pub fn thread_ids_page(
+    conn: &Connection,
+    account_id: &str,
+    limit: i64,
+) -> Result<Vec<String>, String> {
     let mut stmt = conn
-        .prepare("SELECT id FROM threads WHERE account_id = ?1")
+        .prepare("SELECT id FROM threads WHERE account_id = ?1 LIMIT ?2")
         .map_err(|e| e.to_string())?;
-    let ids: Vec<String> = stmt
-        .query_map(params![account_id], |r| r.get(0))
+    let ids = stmt
+        .query_map(params![account_id, limit], |r| r.get(0))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
-    drop(stmt);
-    for id in ids {
-        delete_thread(conn, &id)?;
+    Ok(ids)
+}
+
+/// Delete a batch of threads — vectors, FTS rows, attachments, messages, and
+/// the thread rows — in one all-or-nothing transaction.
+pub fn delete_threads(conn: &Connection, ids: &[String]) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let ph = vec!["?"; ids.len()].join(",");
+    for sql in [
+        format!("DELETE FROM mail_vec WHERE rowid IN (SELECT vec_rowid FROM vec_meta WHERE thread_id IN ({ph}))"),
+        format!("DELETE FROM vec_meta WHERE thread_id IN ({ph})"),
+        format!("DELETE FROM mail_fts WHERE thread_id IN ({ph})"),
+        format!("DELETE FROM attachments WHERE message_id IN (SELECT id FROM messages WHERE thread_id IN ({ph}))"),
+        format!("DELETE FROM messages WHERE thread_id IN ({ph})"),
+        format!("DELETE FROM threads WHERE id IN ({ph})"),
+    ] {
+        tx.execute(&sql, rusqlite::params_from_iter(ids.iter()))
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+pub fn clear_account_mail(conn: &Connection, account_id: &str) -> Result<(), String> {
+    loop {
+        let ids = thread_ids_page(conn, account_id, 400)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+        delete_threads(conn, &ids)?;
+    }
 }
 
 pub fn set_unread(conn: &Connection, id: &str, unread: bool) -> Result<(), String> {
@@ -2093,6 +2130,54 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].thread_id, "t-new");
         assert_eq!(hits[1].thread_id, "t-old");
+    }
+
+    #[test]
+    fn clear_account_mail_removes_only_that_account() {
+        let conn = open(std::path::Path::new(":memory:")).unwrap();
+        seed(&conn, "t-keep", "Quarterly plans", "the roadmap deck", "Ann", 1_000);
+        let t = Thread {
+            id: "t-gone".into(),
+            subject: "Disconnect me".into(),
+            snippet: String::new(),
+            participants: vec!["Bob".into()],
+            message_count: 1,
+            last_date: 2_000,
+            unread: false,
+            starred: false,
+            labels: vec![],
+            in_inbox: true,
+            snoozed_until: None,
+        };
+        let m = Message {
+            id: "t-gone-m1".into(),
+            thread_id: "t-gone".into(),
+            from: "bob@x.test".into(),
+            from_name: "Bob".into(),
+            to: vec!["you@x.test".into()],
+            cc: vec![],
+            subject: "Disconnect me".into(),
+            snippet: String::new(),
+            body_text: "unsubscribed farewell".into(),
+            body_html: None,
+            date: 2_000,
+            unread: false,
+            attachments: vec![],
+        };
+        upsert_thread(&conn, "other@x.test", &t, &[(m, None, None, None, vec![])]).unwrap();
+
+        clear_account_mail(&conn, "other@x.test").unwrap();
+
+        assert_eq!(count_threads(&conn, "other@x.test"), 0);
+        assert_eq!(count_threads(&conn, ACCT), 1);
+        // FTS rows follow their account: the cleared account's text is gone,
+        // the kept account still searches.
+        assert_eq!(search(&conn, "farewell", "other@x.test").unwrap().len(), 0);
+        assert_eq!(search(&conn, "roadmap", ACCT).unwrap().len(), 1);
+        let msgs: i64 = conn
+            .query_row("SELECT COUNT(*) FROM messages WHERE thread_id = 't-gone'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(msgs, 0);
     }
 
     #[test]

@@ -46,8 +46,19 @@ pub fn get(name: &str) -> Option<String> {
 }
 
 pub fn delete(name: &str) {
-    if let Ok(e) = entry(name) {
-        let _ = e.delete_credential();
+    chain_delete(SERVICE, &LEGACY_SERVICES, name);
+}
+
+/// Delete `name` from the primary AND every legacy service. Deleting only the
+/// primary is not enough: chain_get's copy-forward would resurrect a
+/// surviving legacy copy on the next read — observed post-rebrand, where
+/// disconnect deleted the SnailMail token entry and the (revoked) FissionMail
+/// copy kept coming back as a permanently-failing session.
+fn chain_delete(primary: &str, legacy: &[&str], name: &str) {
+    for svc in std::iter::once(primary).chain(legacy.iter().copied()) {
+        if let Ok(e) = keyring::Entry::new(svc, name) {
+            let _ = e.delete_credential();
+        }
     }
 }
 
@@ -74,7 +85,7 @@ fn chain_get(primary: &str, legacy: &[&str], name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::chain_get;
+    use super::{chain_delete, chain_get};
 
     /// Real OS-keychain entries under throwaway service names, wiped before
     /// and after each test so nothing lingers in Credential Manager.
@@ -138,5 +149,19 @@ mod tests {
     fn absent_everywhere_is_none() {
         let _s = Scratch::new(&[NEW, MID, OLD], "t:absent");
         assert_eq!(chain_get(NEW, &[MID, OLD], "t:absent"), None);
+    }
+
+    #[test]
+    fn delete_removes_every_service_copy_so_nothing_resurrects() {
+        let s = Scratch::new(&[NEW, MID, OLD], "t:del-all");
+        s.set(NEW, "new-v");
+        s.set(MID, "mid-v");
+        s.set(OLD, "old-v");
+        chain_delete(NEW, &[MID, OLD], "t:del-all");
+        assert_eq!(s.get(NEW), None);
+        assert_eq!(s.get(MID), None);
+        assert_eq!(s.get(OLD), None);
+        // and a chained read can no longer copy anything forward
+        assert_eq!(chain_get(NEW, &[MID, OLD], "t:del-all"), None);
     }
 }
