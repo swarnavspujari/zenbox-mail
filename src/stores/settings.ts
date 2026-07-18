@@ -61,8 +61,12 @@ export const useSettings = create<SettingsState>((set, get) => ({
       backend.getStreaks(),
       backend.getAccounts(),
     ]);
-    const capabilities = await loadCapabilities(accounts);
-    set({ settings, kb, streaks, accounts, capabilities, loaded: true });
+    set({ settings, kb, streaks, accounts, loaded: true });
+    // Capabilities gate feature affordances (Drive/Contacts/…), not first
+    // paint — activeCapabilities() reads all-false until they land.
+    void loadCapabilities(accounts).then((capabilities) =>
+      set({ capabilities })
+    );
   },
 
   save: async (patch) => {

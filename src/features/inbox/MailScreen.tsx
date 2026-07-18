@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { backend } from "@/lib/ipc";
 import { runCommandById } from "@/lib/commands";
+import { startOfToday, useCalendar } from "@/stores/calendar";
 import { splitThreads, useMail } from "@/stores/mail";
 import { useSettings } from "@/stores/settings";
 import { CalendarPanel } from "@/features/calendar/CalendarPanel";
@@ -32,22 +32,16 @@ function timeLabel(ms: number): string {
 /** Toggle for the day panel; the badge counts what's still ahead today. */
 function CalendarToggle({ overlay }: { overlay?: boolean }) {
   const open = useSettings((s) => s.settings.calendarOpen);
-  const [upcoming, setUpcoming] = useState<number | null>(null);
-
-  // Only hit Google when the panel is open — this component is always mounted,
-  // and an eager listEvents on every MailScreen mount was a per-navigation
-  // network round-trip (and a repeated failure when Calendar isn't configured).
-  useEffect(() => {
-    if (!open) {
-      setUpcoming(null);
-      return;
-    }
-    const dayStart = new Date().setHours(0, 0, 0, 0);
-    backend
-      .listEvents(dayStart, dayStart + 86_400_000)
-      .then((ev) => setUpcoming(ev.filter((e) => e.endMs > Date.now()).length))
-      .catch(() => setUpcoming(null));
-  }, [open]);
+  // The badge derives from the shared day-keyed cache (the open panel's
+  // loadRange fills it) — no listEvents round-trip of its own on every
+  // MailScreen remount, and nothing hits Google while the panel is closed.
+  const eventsByDay = useCalendar((s) => s.eventsByDay);
+  const loadedDays = useCalendar((s) => s.loadedDays);
+  const dayStart = startOfToday();
+  const upcoming =
+    open && loadedDays[dayStart]
+      ? (eventsByDay[dayStart] ?? []).filter((e) => e.endMs > Date.now()).length
+      : null;
 
   return (
     <button

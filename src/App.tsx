@@ -137,10 +137,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void useSettings
-      .getState()
-      .load()
-      .then(() => useMail.getState().refresh());
+    // Settings and mail load concurrently: the mail lists don't depend on
+    // settings, and chaining them cost a full IPC round-trip before any row.
+    void useSettings.getState().load();
+    void useMail.getState().refresh();
     startUpdateChecks();
 
     // Reconciliation is debounced: sync / outbox / the 30s loop emit

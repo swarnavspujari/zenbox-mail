@@ -38,16 +38,25 @@ function fmtWhen(
   return endMs ? `${day(startMs)} · ${time(startMs)} – ${time(endMs)}` : `${day(startMs)} · ${time(startMs)}`;
 }
 
+// Session cache of invite detection per thread (null = "not an invite", the
+// overwhelmingly common answer) so reopening never refires the lookup.
+const inviteCache = new Map<ThreadId, ThreadInvite | null>();
+
 export function InviteBar({ threadId }: { threadId: ThreadId }) {
-  const [invite, setInvite] = useState<ThreadInvite | null>(null);
+  const [invite, setInvite] = useState<ThreadInvite | null>(
+    () => inviteCache.get(threadId) ?? null
+  );
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let stale = false;
-    setInvite(null);
+    const cached = inviteCache.get(threadId);
+    setInvite(cached ?? null);
+    if (cached !== undefined) return; // cached (invite or confirmed non-invite)
     backend
       .threadInvite(threadId)
       .then((inv) => {
+        inviteCache.set(threadId, inv);
         if (!stale) setInvite(inv);
       })
       .catch(() => {});
@@ -81,6 +90,7 @@ export function InviteBar({ threadId }: { threadId: ThreadId }) {
     setBusy(true);
     try {
       const updated = await backend.rsvpEvent(ev.calendarId, ev.id, response);
+      inviteCache.set(threadId, { ...invite, event: updated });
       setInvite({ ...invite, event: updated });
       useUi.getState().showToast(
         response === "accepted"

@@ -53,6 +53,11 @@ function splitQuotedText(text: string): { main: string; quoted: string | null } 
 
 const QUOTE_MARKERS = ["gmail_quote", "<blockquote"];
 
+// Instant-reply suggestions per thread + newest message: a reopen paints them
+// in the same frame and never re-runs the AI call; a thread that gained a
+// message gets fresh ones. (On desktop aiSuggestReplies is a provider call.)
+const suggestionsCache = new Map<string, string[]>();
+
 // Injected into every message's shadow root. Theme tokens: CSS custom
 // properties (and color-scheme) inherit THROUGH shadow boundaries, so the
 // email restyles live on theme flips with no re-render. The email's own
@@ -560,14 +565,24 @@ export function ThreadView() {
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [pendingHere.length]);
 
-  // Fetch instant-reply suggestions for the open thread.
+  // Fetch instant-reply suggestions for the open thread — cache-first. The
+  // fetch waits for the messages to settle (keying on the newest message id),
+  // so a cached reopen shows suggestions instantly with no AI round-trip.
+  const lastMsgId = messages[messages.length - 1]?.id ?? null;
   useEffect(() => {
-    useUi.getState().setSuggestions([]);
-    if (!threadId) return;
+    if (!threadId || !lastMsgId) {
+      useUi.getState().setSuggestions([]);
+      return;
+    }
+    const key = `${threadId}#${lastMsgId}`;
+    const cached = suggestionsCache.get(key);
+    useUi.getState().setSuggestions(cached ?? []);
+    if (cached) return;
     let stale = false;
     backend
       .aiSuggestReplies(threadId)
       .then((s) => {
+        suggestionsCache.set(key, s.slice(0, 3));
         if (!stale) useUi.getState().setSuggestions(s.slice(0, 3));
       })
       .catch(() => {
@@ -576,7 +591,7 @@ export function ThreadView() {
     return () => {
       stale = true;
     };
-  }, [threadId]);
+  }, [threadId, lastMsgId]);
 
   const thread = useMail((s) =>
     [...s.inbox, ...s.done, ...s.reminders, ...s.starred, ...s.trash].find(

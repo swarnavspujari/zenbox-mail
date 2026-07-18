@@ -581,4 +581,83 @@ class TauriBackend implements Backend {
   }
 }
 
-export const backend: Backend = isTauri ? new TauriBackend() : new MockBackend();
+// --- IPC instrumentation ---------------------------------------------------
+// Records every backend call (count + duration per method) on window.__ipc so
+// slow navigations can be traced to their round-trips — in the demo AND the
+// desktop app (open devtools and inspect __ipc.stats / __ipc.log). In the
+// browser demo the mock resolves in ~0 ms, which real IPC does not; setting
+// localStorage["snail-ipc-latency"] to a millisecond count delays every mock
+// call by that much to approximate desktop latency. No-op by default.
+interface IpcStat {
+  calls: number;
+  totalMs: number;
+  lastMs: number;
+}
+
+function instrument(real: Backend): Backend {
+  if (typeof window === "undefined") return real;
+  const stats: Record<string, IpcStat> = {};
+  const log: { m: string; start: number; ms: number }[] = [];
+  (window as unknown as Record<string, unknown>).__ipc = {
+    stats,
+    log,
+    reset() {
+      for (const k of Object.keys(stats)) delete stats[k];
+      log.length = 0;
+    },
+  };
+  const latency = () =>
+    isTauri ? 0 : Number(localStorage.getItem("snail-ipc-latency") ?? 0) || 0;
+  // MessageChannel hops instead of setTimeout: hidden tabs clamp timers to
+  // ~1s, which would turn a 30ms simulated latency into a second.
+  const hopDelay = (ms: number) =>
+    new Promise<void>((resolve) => {
+      const deadline = performance.now() + ms;
+      const ch = new MessageChannel();
+      ch.port1.onmessage = () => {
+        if (performance.now() >= deadline) resolve();
+        else ch.port2.postMessage(0);
+      };
+      ch.port2.postMessage(0);
+    });
+  const record = (m: string, start: number) => {
+    const ms = performance.now() - start;
+    const s = (stats[m] ??= { calls: 0, totalMs: 0, lastMs: 0 });
+    s.calls++;
+    s.totalMs += ms;
+    s.lastMs = ms;
+    if (log.length < 2000) log.push({ m, start, ms });
+  };
+  return new Proxy(real, {
+    get(target, prop, receiver) {
+      const v = Reflect.get(target, prop, receiver);
+      if (typeof v !== "function") return v;
+      return (...args: unknown[]) => {
+        const start = performance.now();
+        const out = (v as (...a: unknown[]) => unknown).apply(target, args);
+        // Only data calls (promises) are timed; aiDraft's cancel fn and the
+        // on* unsubscribe fns pass through untouched.
+        if (!(out instanceof Promise)) return out;
+        const lat = latency();
+        const delayed =
+          lat > 0
+            ? out.then(
+                async (r) => {
+                  await hopDelay(lat);
+                  return r;
+                },
+                async (e) => {
+                  await hopDelay(lat);
+                  throw e;
+                }
+              )
+            : out;
+        return delayed.finally(() => record(prop as string, start));
+      };
+    },
+  });
+}
+
+export const backend: Backend = instrument(
+  isTauri ? new TauriBackend() : new MockBackend()
+);

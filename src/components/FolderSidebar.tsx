@@ -78,16 +78,22 @@ function Item({
   );
 }
 
+// The sidebar remounts on every thread open/close and screen switch; keep the
+// last label list module-side so it paints instantly (the fetch revalidates).
+let labelsCache: string[] | null = null;
+
 /** Left-hand mailbox navigator: fixed folders + the account's labels. */
 export function FolderSidebar() {
   const listView = useMail((s) => s.listView);
   const inboxCount = useMail((s) => s.inbox.length);
   const active = useSettings((s) => s.accounts.active);
-  const [labels, setLabels] = useState<string[]>([]);
+  const [labels, setLabels] = useState<string[]>(() => labelsCache ?? []);
 
   useEffect(() => {
     void backend.listLabels().then((all) => {
-      setLabels(all.filter((l) => !isSystemLabel(l)));
+      const user = all.filter((l) => !isSystemLabel(l));
+      labelsCache = user;
+      setLabels(user);
     });
   }, []);
 

@@ -11,6 +11,27 @@ let lastSearchQuery = "";
 // Monotonic id for optimistic reply rows (pending-1, pending-2, …).
 let pendingSeq = 1;
 
+// Session caches so navigation paints from the last known state instantly and
+// the fetch reconciles behind it (never clearing what's visible).
+const labelCache = new Map<string, Thread[]>();
+const threadCache = new Map<ThreadId, Message[]>();
+const THREAD_CACHE_MAX = 50;
+
+function cacheThread(id: ThreadId, msgs: Message[]) {
+  threadCache.delete(id); // re-insert = move to the back of the LRU order
+  threadCache.set(id, msgs);
+  if (threadCache.size > THREAD_CACHE_MAX) {
+    const oldest = threadCache.keys().next().value;
+    if (oldest !== undefined) threadCache.delete(oldest);
+  }
+}
+
+/** Test hook: drop the session caches (label lists + thread messages). */
+export function clearMailCaches() {
+  labelCache.clear();
+  threadCache.clear();
+}
+
 interface MailState {
   loaded: boolean;
   inbox: Thread[];
@@ -127,16 +148,22 @@ export const useMail = create<MailState>((set, get) => ({
 
   refresh: async () => {
     const labelView = get().listView.startsWith("label:") ? get().listView : null;
-    const [inbox, done, reminders, starred, trash, labelThreads] =
-      await Promise.all([
-        backend.listThreads("inbox"),
-        backend.listThreads("done"),
-        backend.listThreads("reminders"),
-        backend.listThreads("starred"),
-        backend.listThreads("trash"),
-        labelView ? backend.listThreads(labelView) : Promise.resolve([]),
-      ]);
-    set({ inbox, done, reminders, starred, trash, labelThreads, loaded: true });
+    // Each view applies as its fetch lands — no barrier, so the inbox paints
+    // without waiting for the slowest of six round-trips. The selection
+    // clamp/prune below still runs once everything has settled.
+    await Promise.all([
+      backend.listThreads("inbox").then((inbox) => set({ inbox, loaded: true })),
+      backend.listThreads("done").then((done) => set({ done })),
+      backend.listThreads("reminders").then((reminders) => set({ reminders })),
+      backend.listThreads("starred").then((starred) => set({ starred })),
+      backend.listThreads("trash").then((trash) => set({ trash })),
+      labelView
+        ? backend.listThreads(labelView).then((labelThreads) => {
+            labelCache.set(labelView, labelThreads);
+            if (get().listView === labelView) set({ labelThreads });
+          })
+        : Promise.resolve(),
+    ]);
     const s = get();
     const visible = visibleThreads(s);
     const max = visible.length - 1;
@@ -154,11 +181,14 @@ export const useMail = create<MailState>((set, get) => ({
       listView: v,
       selectedIndex: 0,
       selectedIds: new Set(),
-      labelThreads: [],
+      // A label view paints from its last known list; the fetch below
+      // reconciles behind it (first visit starts empty, as before).
+      labelThreads: v.startsWith("label:") ? (labelCache.get(v) ?? []) : [],
       noMoreOlder: false,
     });
     if (v.startsWith("label:")) {
       void backend.listThreads(v).then((labelThreads) => {
+        labelCache.set(v, labelThreads);
         if (get().listView === v) set({ labelThreads });
       });
     }
@@ -209,9 +239,20 @@ export const useMail = create<MailState>((set, get) => ({
   clearSelection: () => set({ selectedIds: new Set() }),
 
   openThread: async (id) => {
-    // switch immediately so J/K feels instant; messages populate right after
-    set({ openThreadId: id, openMessages: [], blankHealDone: false });
+    // Cache-first: a previously read thread paints its messages in the same
+    // frame; the getThread below still runs and reconciles behind it. A
+    // first-ever open starts empty (as before) until the fetch lands.
+    const cached = threadCache.get(id);
+    set({
+      openThreadId: id,
+      openMessages: cached ?? [],
+      // Cached blank-free messages need no heal spinner while revalidating.
+      blankHealDone: cached
+        ? !cached.some((m) => !m.bodyHtml && !m.bodyText.trim())
+        : false,
+    });
     const msgs = await backend.getThread(id);
+    cacheThread(id, msgs);
     if (get().openThreadId !== id) return; // user already moved on
     const hasBlank = msgs.some((m) => !m.bodyHtml && !m.bodyText.trim());
     set((s) => ({
@@ -230,6 +271,7 @@ export const useMail = create<MailState>((set, get) => ({
       void backend
         .refetchMessageBody(id)
         .then((healed) => {
+          cacheThread(id, healed);
           if (get().openThreadId === id)
             set((s) => ({
               openMessages: healed,
@@ -254,6 +296,7 @@ export const useMail = create<MailState>((set, get) => ({
     const id = get().openThreadId;
     if (!id) return;
     const msgs = await backend.getThread(id);
+    cacheThread(id, msgs);
     // only apply if the user is still on this thread
     if (get().openThreadId === id)
       set((s) => ({

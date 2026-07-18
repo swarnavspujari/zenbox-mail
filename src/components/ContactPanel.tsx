@@ -16,6 +16,10 @@ const FREEMAIL = new Set([
   "fission.local",
 ]);
 
+// Session cache of each contact's raw mail history so reopening a thread
+// paints the panel instantly; the fetch revalidates behind it.
+const historyCache = new Map<string, SearchResult[]>();
+
 export function ContactPanel({
   name,
   email,
@@ -25,25 +29,32 @@ export function ContactPanel({
   email: string;
   currentThreadId: ThreadId;
 }) {
-  const [history, setHistory] = useState<SearchResult[]>([]);
+  const [rawHistory, setRawHistory] = useState<SearchResult[]>(
+    () => historyCache.get(email) ?? []
+  );
 
   useEffect(() => {
     let stale = false;
-    setHistory([]);
+    setRawHistory(historyCache.get(email) ?? []);
     // Address-scoped history: threads this contact was actually a participant
     // in (from/to/cc), not a full-text match on their name — so unrelated mail
-    // that merely mentions the word never leaks in. Drop the open thread.
+    // that merely mentions the word never leaks in.
     backend
       .threadsWithContact(email)
       .then((r) => {
-        if (!stale)
-          setHistory(r.filter((x) => x.threadId !== currentThreadId).slice(0, 5));
+        historyCache.set(email, r);
+        if (!stale) setRawHistory(r);
       })
       .catch(() => {});
     return () => {
       stale = true;
     };
-  }, [email, currentThreadId]);
+  }, [email]);
+
+  // Drop the open thread at render time (the cache keeps the raw list).
+  const history = rawHistory
+    .filter((x) => x.threadId !== currentThreadId)
+    .slice(0, 5);
 
   const domain = email.split("@")[1] ?? "";
   const website = domain && !FREEMAIL.has(domain.toLowerCase()) ? domain : null;

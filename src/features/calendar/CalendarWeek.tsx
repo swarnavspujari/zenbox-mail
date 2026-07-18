@@ -123,7 +123,10 @@ export function CalendarWeek() {
   }, [weekStart]);
 
   useEffect(() => {
-    void useCalendar.getState().loadCalendars();
+    // The list survives in the store across remounts; the event modal
+    // (openCreate/openEdit) still fetches fresh every time.
+    if (useCalendar.getState().calendars.length === 0)
+      void useCalendar.getState().loadCalendars();
   }, []);
 
   useEffect(() => {

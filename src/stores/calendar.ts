@@ -8,6 +8,15 @@ import type { CalendarEvent, CalendarInfo } from "@/lib/types";
 
 export const DAY_MS = 24 * 3600_000;
 
+// One requestRefresh per range per window (see requestRefresh below).
+const REFRESH_THROTTLE_MS = 30_000;
+const refreshRequestedAt = new Map<string, number>();
+
+/** Test hook: forget which ranges were recently refresh-requested. */
+export function clearCalendarThrottle() {
+  refreshRequestedAt.clear();
+}
+
 export function startOfToday(): number {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -52,8 +61,10 @@ interface CalendarState {
   goToday: () => void;
   /** Jump the focused day to a local-midnight ms (mini-month click). */
   goToDay: (dayStartMs: number) => void;
-  /** Local read of [dayStart, dayStart + days), bucketed per day. */
-  loadRange: (dayStart: number, days: number) => Promise<void>;
+  /** Local read of [dayStart, dayStart + days), bucketed per day. Days
+   *  already in the cache are skipped unless `force` (the calendar:updated
+   *  reconcile path) — navigation over loaded days is a pure cache paint. */
+  loadRange: (dayStart: number, days: number, opts?: { force?: boolean }) => Promise<void>;
   /** Ask the backend for fresh data around the active range. */
   requestRefresh: () => void;
   /** calendar:updated landed — re-read the active range / surface errors. */
@@ -83,14 +94,23 @@ export const useCalendar = create<CalendarState>((set, get) => ({
   goToDay: (dayStartMs) =>
     set({ dayOffset: Math.round((dayStartMs - startOfToday()) / DAY_MS) }),
 
-  loadRange: async (dayStart, days) => {
+  loadRange: async (dayStart, days, opts) => {
     set({ activeStart: dayStart, activeDays: days });
+    // Trim already-loaded days off both ends of the range; a fully cached
+    // range is a no-op (the views paint straight from eventsByDay).
+    let from = dayStart;
+    let to = dayStart + days * DAY_MS;
+    if (!opts?.force) {
+      const loadedDays = get().loadedDays;
+      while (from < to && loadedDays[from]) from += DAY_MS;
+      while (to > from && loadedDays[to - DAY_MS]) to -= DAY_MS;
+      if (from >= to) return;
+    }
     try {
-      const events = await backend.listEvents(dayStart, dayStart + days * DAY_MS);
+      const events = await backend.listEvents(from, to);
       const byDay: Record<number, CalendarEvent[]> = {};
       const loaded: Record<number, true> = {};
-      for (let i = 0; i < days; i++) {
-        const d = dayStart + i * DAY_MS;
+      for (let d = from; d < to; d += DAY_MS) {
         byDay[d] = events.filter((e) => e.startMs < d + DAY_MS && e.endMs > d);
         loaded[d] = true;
       }
@@ -106,6 +126,14 @@ export const useCalendar = create<CalendarState>((set, get) => ({
 
   requestRefresh: () => {
     const s = get();
+    // One background sync per range per window: day/week nav shouldn't spam
+    // the network (the core throttles too; the mock echoes synchronously).
+    // Freshness after writes is untouched — that flows through
+    // calendar:updated → handleUpdated, which always re-reads.
+    const key = `${s.activeStart}:${s.activeDays}`;
+    const last = refreshRequestedAt.get(key) ?? 0;
+    if (Date.now() - last < REFRESH_THROTTLE_MS) return;
+    refreshRequestedAt.set(key, Date.now());
     void backend
       .refreshCalendar(s.activeStart, s.activeStart + s.activeDays * DAY_MS)
       .catch(() => {});
@@ -117,7 +145,7 @@ export const useCalendar = create<CalendarState>((set, get) => ({
       return;
     }
     const s = get();
-    void s.loadRange(s.activeStart, s.activeDays);
+    void s.loadRange(s.activeStart, s.activeDays, { force: true });
   },
 
   loadCalendars: async () => {
